@@ -1,7 +1,8 @@
 import stravalib 
-from dotenv import load_dotenv, set_key
+from dotenv import set_key
 import os
-import time
+from datetime import datetime
+
 
 def api_setup(dotenv_path : str) -> None:
 
@@ -70,3 +71,20 @@ def refresh_api_access(dotenv_path : str):
                 value_to_set = str(token_response.get("expires_at")))
 
     print("✅ Neues Token gespeichert!")
+
+def get_rides(client : stravalib.Client, n : int) -> list:
+
+    activity_list = []
+
+    response = client.get_activities(limit = n)
+
+    for act in response:
+
+        act_name = act.name
+        act_date = act.start_date.strftime("%d.%m.%Y")
+        act_dist = act.distance / 1000
+        act_watts = act.average_watts
+
+        activity_list.append([act_name, act_date, act_dist, act_watts])
+
+    return activity_list

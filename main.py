@@ -2,7 +2,7 @@ import stravalib
 from dotenv import load_dotenv, set_key
 import os
 import time
-from backend.api_reader import api_setup, refresh_api_access
+from backend.api_reader import api_setup, refresh_api_access, get_rides
 
 if __name__ == "__main__":
 
@@ -29,3 +29,9 @@ if __name__ == "__main__":
     else:
 
         print("✅ Token gültig!")
+
+    client = stravalib.Client(access_token = str(os.getenv("STRAVA_ACCESS_TOKEN")),
+                              refresh_token = str(os.getenv("STRAVA_REFRESH_TOKEN")),
+                              token_expires = int(str(os.getenv("STRAVA_EXPIRES_AT"))))
+
+    print(get_rides(client = client, n = 5))
