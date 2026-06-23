@@ -26,8 +26,8 @@ class GUIBox:
     Background and textcolors are given as (R,G,B)
     """
 
-    def __init__(self, size : tuple[float,float],
-                 anchor : tuple[float,float],
+    def __init__(self, size : tuple[int,int],
+                 anchor : tuple[int,int],
                  backgroud_color : int):
                 #  outline_RGB : tuple[int,...],
                
@@ -58,7 +58,23 @@ class GUIBox:
             "text_color" : text_color
         })
 
-    def draw(self, draw : ImageDraw.ImageDraw) -> None:
+    def draw_dithered(self, draw : ImageDraw.ImageDraw, color_1, color_2, dither_count : int = 2):
+        
+        w, h = self.size
+        off_x, off_y = self.anchor
+        for x in range(w):
+            for y in range(h):
+                if(x+y)% dither_count == 0:
+
+                    draw.point((x+off_x,y+off_y), color_1)
+                
+                else:
+                    
+                    draw.point((x+off_x,y+off_y), color_2)
+                    
+        
+
+    def draw_box(self, draw : ImageDraw.ImageDraw) -> None:
 
         """
         Draws the Box according to its attributes. 
@@ -151,7 +167,7 @@ spectra6_colors = [
     0,   255, 0       # 5: Grün
 ]
 
-# FILL THE LIST WOTH ZEROS
+# FILL THE LIST REST OF THE WIsTH ZEROS
 spectra6_colors = spectra6_colors + [0] * (768 - len(spectra6_colors))
 
 # https://www.alibaba.com/product-detail/Sunlight-readable-4-inch-400-600_1601808118902.html?spm=a2700.prosearch.normal_offer.d_image.7c5467afJgX2JB&priceId=ceca9c4c4572456596046ef68faf56f6
@@ -160,6 +176,10 @@ test_display : Display = Display((600,400), spectra6_colors)
 
 test_display.title_box = GUIBox((580,30), (10,10), backgroud_color = 3)
 test_display.title_box.add_text("Test", (0.1,0.1), text_color = 4, fontsize = 30, bold = True)
-test_display.title_box.draw(draw = test_display.draw)
+test_display.title_box.draw_box(draw = test_display.draw)
 
-test_display.image.show()
+dithered_display = Display((600,400), spectra6_colors)
+
+dithered_display.title_box = GUIBox((580,30), (10,10), backgroud_color = 3)
+dithered_display.title_box.draw_dithered(dithered_display.draw, 3, 2, 2)
+dithered_display.image.show()
