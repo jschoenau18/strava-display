@@ -72,8 +72,6 @@ class GUIBox:
                     
                     draw.point((x+off_x,y+off_y), color_2)
                     
-        
-
     def draw_box(self, draw : ImageDraw.ImageDraw) -> None:
 
         """
@@ -114,10 +112,35 @@ class GUIBox:
 
             draw.text(xy = (x1,y1), text = item["text"], fill = item["text_color"], font = font)    
 
+def image_cleanup(image : Image.Image) -> Image.Image:
+
+    img = image.convert("RGBA")
+    img_data = img.get_flattened_data()
+    new_data = []
+
+    for pix in img_data:
+        
+        if isinstance(pix, tuple):
+            
+            r,g,b,a = pix
+            
+            if a < 20:
+                
+                new_data.append((0,0,0,0))
+            
+            else:
+
+                new_data.append((r,g,b,255))
+        
+    img.putdata(new_data)
+    
+    return img
+
 # FUNKTION, DIE AUS DER MAIN AUFGERUFEN WIRD
 # BRAUCHT DIE API DATEN
 
 def make_gui() -> Image.Image:
+    
     ...
 
 def generate_greeting() -> str:
@@ -143,43 +166,49 @@ def generate_greeting() -> str:
     
     return greeting
 
-# SET TO GERMAN TIME FORMAT
-locale.setlocale(locale.LC_TIME, "de_DE.UTF-8")
+if __name__ == "__main__":
 
-#LOAD LOGOS
-strava_logo_white = Image.open("display/img/strava-logo-full-white.png")
-strava_logo_orange = Image.open("display/img/strava-logo-full-orange.png").resize((84,20), Image.Resampling.LANCZOS)
+    # SET TO GERMAN TIME FORMAT
+    locale.setlocale(locale.LC_TIME, "de_DE.UTF-8")
 
-#LOAD FONTS
-font_regular : str = "display/fonts/Roboto-Regular.ttf"
-font_regular_con : str = "display/fonts/RobotoCondensed-Regular.ttf"
-font_bold : str = "display/fonts/Roboto-Bold.ttf"
-font_bold_con : str = "display/fonts/RobotoCondensed-Bold.ttf"
-
-# image.paste(strava_logo_orange, (50,50), strava_logo_orange)
-
-spectra6_colors = [
+    # SET SPRECTRA 6 COLOR PALETTE
+    spectra6_colors = [
     0,   0,   0,      # 0: Schwarz
     255, 255, 255,    # 1: Weiß
     255, 0,   0,      # 2: Rot
     255, 255, 0,      # 3: Gelb
     0,   0,   255,    # 4: Blau
     0,   255, 0       # 5: Grün
-]
+    ]
 
-# FILL THE LIST REST OF THE WIsTH ZEROS
-spectra6_colors = spectra6_colors + [0] * (768 - len(spectra6_colors))
+    # FILL THE LIST REST OF THE WITH ZEROS
+    spectra6_colors = spectra6_colors + [0] * (768 - len(spectra6_colors))
 
-# https://www.alibaba.com/product-detail/Sunlight-readable-4-inch-400-600_1601808118902.html?spm=a2700.prosearch.normal_offer.d_image.7c5467afJgX2JB&priceId=ceca9c4c4572456596046ef68faf56f6
-test_display : Display = Display((600,400), spectra6_colors)
+    # DUMMY IMAGE FOR CONVERSION
+    pal_img = Image.new("P", (1, 1))
+    pal_img.putpalette(spectra6_colors)
+
+    #LOAD LOGOS
+    strava_logo_white = image_cleanup(Image.open("display/img/strava-logo-full-white.png"))
+    strava_logo_white = strava_logo_white.convert("RGB").quantize(palette=pal_img)
+    strava_logo_orange = image_cleanup(Image.open("display/img/strava-logo-full-orange.png").resize((84,20), Image.Resampling.LANCZOS))
+    strava_logo_orange = strava_logo_orange.convert("RGB").quantize(palette=pal_img, dither=Image.Dither.NONE)
+
+    #LOAD FONTS
+    font_regular : str = "display/fonts/Roboto-Regular.ttf"
+    font_regular_con : str = "display/fonts/RobotoCondensed-Regular.ttf"
+    font_bold : str = "display/fonts/Roboto-Bold.ttf"
+    font_bold_con : str = "display/fonts/RobotoCondensed-Bold.ttf"
 
 
-test_display.title_box = GUIBox((580,30), (10,10), backgroud_color = 3)
-test_display.title_box.add_text("Test", (0.1,0.1), text_color = 4, fontsize = 30, bold = True)
-test_display.title_box.draw_box(draw = test_display.draw)
 
-dithered_display = Display((600,400), spectra6_colors)
 
-dithered_display.title_box = GUIBox((580,30), (10,10), backgroud_color = 3)
-dithered_display.title_box.draw_dithered(dithered_display.draw, 3, 2, 2)
-dithered_display.image.show()
+
+    # https://www.alibaba.com/product-detail/Sunlight-readable-4-inch-400-600_1601808118902.html?spm=a2700.prosearch.normal_offer.d_image.7c5467afJgX2JB&priceId=ceca9c4c4572456596046ef68faf56f6
+    test_display : Display = Display((600,400), spectra6_colors)
+
+    test_display.title_box = GUIBox((int(0.9 * test_display.size[0]), int(0.2 * test_display.size[1])), (int(0.05 * test_display.size[0]),int(0.05 * test_display.size[0])), 4)
+    test_display.title_box.draw_box(test_display.draw)
+    test_display.image.paste(strava_logo_orange, test_display.title_box.anchor)
+    test_display.image.show()
+    
