@@ -2,6 +2,11 @@ import stravalib
 from dotenv import set_key
 import os
 from datetime import datetime
+import polyline
+import gpxpy
+import gpxpy.gpx
+from pathlib import Path
+import re
 
 
 def api_setup(dotenv_path : str) -> None:
@@ -81,10 +86,48 @@ def get_rides(client : stravalib.Client, n : int) -> list:
     for act in response:
 
         act_name = act.name
-        act_date = act.start_date.strftime("%d.%m.%Y")
-        act_dist = act.distance / 1000
+        
+        if act.start_date is not None:
+            act_date = act.start_date.strftime("%d.%m.%Y")
+        else: act_date = 0
+
+        if act.distance is not None:
+            act_dist = act.distance / 1000
+        else:
+            act_dist = 0
         act_watts = act.average_watts
 
         activity_list.append([act_name, act_date, act_dist, act_watts])
 
     return activity_list
+
+def segment_gpx(client : stravalib.Client, segment_id : int) -> None:
+    
+    gpx_output_dir = Path(__file__).resolve().parent.parent / "gpx-output"
+    gpx_output_dir.mkdir(parents = True, exist_ok = True)
+
+    seg = client.get_segment(segment_id = segment_id)
+    if seg.map is None or seg.map.polyline is None:
+        raise ValueError(f"Segment {segment_id} has no map polyline data")
+
+    polyline_str = seg.map.polyline
+    coors = polyline.decode(polyline_str)
+
+    gpx = gpxpy.gpx.GPX()
+
+    gpx_track = gpxpy.gpx.GPXTrack(name = seg.name)
+    gpx.tracks.append(gpx_track)
+
+    gpx_segment = gpxpy.gpx.GPXTrackSegment()
+    gpx_track.segments.append(gpx_segment)
+
+    for lat,long in coors:
+        trackpoint = gpxpy.gpx.GPXTrackPoint(latitude = lat, longitude = long)
+        gpx_segment.points.append(trackpoint)
+    
+    segment_name = seg.name or "segment"
+    safe_name = re.sub(r'[\\/*?:"<> |]', '_', segment_name)
+    filename = gpx_output_dir / f"{safe_name}.gpx"
+
+    with open(filename, "w", encoding = "utf-8") as gpx_file:
+        gpx_file.write(gpx.to_xml())

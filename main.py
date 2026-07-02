@@ -2,7 +2,7 @@ import stravalib
 from dotenv import load_dotenv, set_key
 import os
 import time
-from backend.api_reader import api_setup, refresh_api_access, get_rides
+from backend.api_reader import api_setup, refresh_api_access, get_rides, segment_gpx
 
 if __name__ == "__main__":
 
@@ -34,4 +34,4 @@ if __name__ == "__main__":
                               refresh_token = str(os.getenv("STRAVA_REFRESH_TOKEN")),
                               token_expires = int(str(os.getenv("STRAVA_EXPIRES_AT"))))
 
-    print(get_rides(client = client, n = 5))
+    segment_gpx(client, 36694370)
