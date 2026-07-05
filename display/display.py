@@ -112,6 +112,19 @@ class GUIBox:
 
             draw.text(xy = (x1,y1), text = item["text"], fill = item["text_color"], font = font)    
 
+def to_spectra6(img_rgba : Image.Image, pal_img : Image.Image, transparent_index : int = 6) -> Image.Image:
+    
+    alpha = img_rgba.getchannel("A")
+
+    img_p = img_rgba.convert("RGB").quantize(palette = pal_img)
+
+    mask = alpha.point(lambda a: 255 if a == 0 else 0)
+
+    img_p.paste(transparent_index, mask = mask)
+    img_p.info["transparency"] = transparent_index
+
+    return img_p
+
 def image_cleanup(image : Image.Image) -> Image.Image:
 
     img = image.convert("RGBA")
@@ -187,12 +200,14 @@ if __name__ == "__main__":
     # DUMMY IMAGE FOR CONVERSION
     pal_img = Image.new("P", (1, 1))
     pal_img.putpalette(spectra6_colors)
+    pal_img.info["transparency"] = 6
 
     #LOAD LOGOS
     strava_logo_white = image_cleanup(Image.open("display/img/strava-logo-full-white.png"))
-    strava_logo_white = strava_logo_white.convert("RGB").quantize(palette=pal_img)
-    strava_logo_orange = image_cleanup(Image.open("display/img/strava-logo-full-orange.png").resize((84,20), Image.Resampling.LANCZOS))
-    strava_logo_orange = strava_logo_orange.convert("RGB").quantize(palette=pal_img, dither=Image.Dither.NONE)
+    strava_logo_white = to_spectra6(strava_logo_white, pal_img)
+    strava_logo_orange = image_cleanup(Image.open("display/img/strava-logo-full-orange.png"))
+    strava_logo_orange = to_spectra6(strava_logo_orange, pal_img)
+   
 
     #LOAD FONTS
     font_regular : str = "display/fonts/Roboto-Regular.ttf"
@@ -200,15 +215,12 @@ if __name__ == "__main__":
     font_bold : str = "display/fonts/Roboto-Bold.ttf"
     font_bold_con : str = "display/fonts/RobotoCondensed-Bold.ttf"
 
-
-
-
-
     # https://www.alibaba.com/product-detail/Sunlight-readable-4-inch-400-600_1601808118902.html?spm=a2700.prosearch.normal_offer.d_image.7c5467afJgX2JB&priceId=ceca9c4c4572456596046ef68faf56f6
     test_display : Display = Display((600,400), spectra6_colors)
 
     test_display.title_box = GUIBox((int(0.9 * test_display.size[0]), int(0.2 * test_display.size[1])), (int(0.05 * test_display.size[0]),int(0.05 * test_display.size[0])), 4)
     test_display.title_box.draw_box(test_display.draw)
-    test_display.image.paste(strava_logo_orange, test_display.title_box.anchor)
+    paste_mask = strava_logo_orange.point(lambda p: 0 if p == 6 else 255, mode = "L")
+    test_display.image.paste(strava_logo_orange, test_display.title_box.anchor, mask = paste_mask)
     test_display.image.show()
     
