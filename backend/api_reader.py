@@ -77,29 +77,99 @@ def refresh_api_access(dotenv_path : str):
 
     print("✅ Neues Token gespeichert!")
 
-def get_rides(client : stravalib.Client, n : int) -> list:
+def _duration_seconds(duration) -> float:
 
-    activity_list = []
+    """
+    stravalib <2.0 represents durations as datetime.timedelta, >=2.0 as an
+    int-like Duration (raw seconds). Handle both.
+    """
 
-    response = client.get_activities(limit = n)
+    if duration is None:
+        return 0.0
 
-    for act in response:
+    if hasattr(duration, "total_seconds"):
+        return duration.total_seconds()
 
-        act_name = act.name
-        
-        if act.start_date is not None:
-            act_date = act.start_date.strftime("%d.%m.%Y")
-        else: act_date = 0
+    return float(duration)
 
-        if act.distance is not None:
-            act_dist = act.distance / 1000
-        else:
-            act_dist = 0
-        act_watts = act.average_watts
+def _activity_to_dict(act) -> dict:
 
-        activity_list.append([act_name, act_date, act_dist, act_watts])
+    return {
+        "name": act.name,
+        "date": act.start_date_local.strftime("%d.%m.%Y") if act.start_date_local else None,
+        "sport_type": str(act.sport_type) if act.sport_type else None,
+        "distance_km": round(float(act.distance) / 1000, 1) if act.distance is not None else 0.0,
+        "moving_time_min": round(_duration_seconds(act.moving_time) / 60),
+        "elevation_gain_m": round(float(act.total_elevation_gain)) if act.total_elevation_gain is not None else 0,
+        "average_watts": round(act.average_watts) if act.average_watts is not None else None,
+    }
 
-    return activity_list
+def get_recent_activities(client : stravalib.Client, n : int) -> list[dict]:
+
+    """
+    Returns a summary dict for each of the last n activities, most recent first.
+    """
+
+    return [_activity_to_dict(act) for act in client.get_activities(limit = n)]
+
+def get_ytd_stats(client : stravalib.Client) -> dict:
+
+    """
+    Returns year-to-date totals across rides, runs and swims combined.
+    """
+
+    stats = client.get_athlete_stats()
+    totals = [stats.ytd_ride_totals, stats.ytd_run_totals, stats.ytd_swim_totals]
+
+    distance_km = 0.0
+    moving_time_min = 0.0
+    elevation_gain_m = 0.0
+    activity_count = 0
+
+    for total in totals:
+
+        if total is None:
+            continue
+
+        if total.distance is not None:
+            distance_km += float(total.distance) / 1000
+
+        if total.moving_time is not None:
+            moving_time_min += _duration_seconds(total.moving_time) / 60
+
+        if total.elevation_gain is not None:
+            elevation_gain_m += float(total.elevation_gain)
+
+        if total.count is not None:
+            activity_count += total.count
+
+    return {
+        "distance_km": round(distance_km, 1),
+        "moving_time_min": round(moving_time_min),
+        "elevation_gain_m": round(elevation_gain_m),
+        "activity_count": activity_count,
+    }
+
+def get_athlete_name(client : stravalib.Client) -> str:
+
+    athlete = client.get_athlete()
+
+    return athlete.firstname or ""
+
+def get_dashboard_data(client : stravalib.Client, n_recent : int = 4) -> dict:
+
+    """
+    Pulls and calculates everything the display needs in one call.
+    """
+
+    recent_activities = get_recent_activities(client, n_recent)
+
+    return {
+        "athlete_name": get_athlete_name(client),
+        "ytd": get_ytd_stats(client),
+        "last_activity": recent_activities[0] if recent_activities else None,
+        "recent_activities": recent_activities,
+    }
 
 def segment_gpx(client : stravalib.Client, segment_id : int) -> None:
     

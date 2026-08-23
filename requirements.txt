@@ -1,0 +1,5 @@
+stravalib>=2.0
+python-dotenv
+polyline
+gpxpy
+Pillow

@@ -1,8 +1,12 @@
-import stravalib 
-from dotenv import load_dotenv, set_key
+import stravalib
+from dotenv import load_dotenv
 import os
 import time
-from backend.api_reader import api_setup, refresh_api_access, get_rides, segment_gpx
+from backend.api_reader import api_setup, refresh_api_access, get_dashboard_data
+from display.display import render_dashboard
+from display.eink import update_display_from_file
+
+OUTPUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "dashboard.png")
 
 if __name__ == "__main__":
 
@@ -34,4 +38,13 @@ if __name__ == "__main__":
                               refresh_token = str(os.getenv("STRAVA_REFRESH_TOKEN")),
                               token_expires = int(str(os.getenv("STRAVA_EXPIRES_AT"))))
 
-    segment_gpx(client, 36694370)
+    dashboard_data = get_dashboard_data(client)
+
+    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok = True)
+    render_dashboard(dashboard_data, output_path = OUTPUT_PATH)
+
+    if os.getenv("STRAVA_UPDATE_DISPLAY", "0") == "1":
+        update_display_from_file(OUTPUT_PATH)
+        print("✅ E-Paper-Display aktualisiert!")
+
+    print(f"✅ Dashboard gerendert: {OUTPUT_PATH}")
