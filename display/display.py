@@ -2,6 +2,7 @@ from __future__ import annotations
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
 from pathlib import Path
+import math
 
 BASE_DIR = Path(__file__).resolve().parent
 FONTS_DIR = BASE_DIR / "fonts"
@@ -27,6 +28,9 @@ TRANSPARENT_INDEX = 6
 
 DISPLAY_SIZE = (600, 400)
 
+EARTH_CIRCUMFERENCE_KM = 40075
+EVEREST_HEIGHT_M = 8849
+
 
 # ENTHÄLT ZB GRÖßE, FARBEN FONTS
 class Display:
@@ -39,6 +43,13 @@ class Display:
         self.image : Image.Image = Image.new('P', self.size, color = 1) #fixed color palette for e ink, white backgroud
         self.draw = ImageDraw.Draw(self.image, mode = 'P')
         self.image.putpalette(self.colors)
+
+def _select_font(fontsize : int, bold : bool, condensed : bool) -> ImageFont.FreeTypeFont:
+
+    if bold:
+        return ImageFont.truetype(FONT_BOLD_CONDENSED if condensed else FONT_BOLD, size = fontsize)
+
+    return ImageFont.truetype(FONT_REGULAR_CONDENSED if condensed else FONT_REGULAR, size = fontsize)
 
 class GUIBox:
 
@@ -121,22 +132,7 @@ class GUIBox:
 
         for item in self.text_list:
 
-            if item["bold"]:
-                if item["condensed"]:
-
-                    font = ImageFont.truetype(FONT_BOLD_CONDENSED, size = item["fontsize"])
-
-                else:
-
-                    font = ImageFont.truetype(FONT_BOLD, size = item["fontsize"])
-            else:
-                if item["condensed"]:
-
-                    font = ImageFont.truetype(FONT_REGULAR_CONDENSED, size = item["fontsize"])
-
-                else:
-
-                    font = ImageFont.truetype(FONT_REGULAR, size = item["fontsize"])
+            font = _select_font(item["fontsize"], item["bold"], item["condensed"])
 
             x1 = self.anchor[0] + item["rel_anchor"][0] * self.size[0]
             y1 = self.anchor[1] + item["rel_anchor"][1] * self.size[1]
@@ -186,17 +182,194 @@ def get_palette_image() -> Image.Image:
 
     return pal_img
 
+def load_icon(pal_img : Image.Image, filename : str) -> Image.Image:
+
+    icon_path = IMG_DIR / filename
+    icon = image_cleanup(Image.open(icon_path))
+
+    return to_spectra6(icon, pal_img)
+
 def load_logo(pal_img : Image.Image, variant : str = "white") -> Image.Image:
 
-    logo_path = IMG_DIR / f"strava-logo-full-{variant}.png"
-    logo = image_cleanup(Image.open(logo_path))
-
-    return to_spectra6(logo, pal_img)
+    return load_icon(pal_img, f"strava-logo-full-{variant}.png")
 
 def paste_with_transparency(base_image : Image.Image, overlay : Image.Image, position : tuple[int,int]) -> None:
 
     paste_mask = overlay.point(lambda p: 0 if p == TRANSPARENT_INDEX else 255, mode = "L")
     base_image.paste(overlay, position, mask = paste_mask)
+
+def draw_light_divider(display : Display, center_x : float, y : int, width : int, thickness : int = 3) -> None:
+
+    """
+    Draws a light-gray dithered divider bar (same technique as the
+    header accent line) centered horizontally on center_x.
+    """
+
+    divider = GUIBox((width, thickness), (int(center_x - width / 2), y), WHITE)
+    divider.draw_dithered(display.draw, BLACK, WHITE, dither_count = 2)
+
+def draw_icon_value(display : Display,
+                     icon : Image.Image,
+                     anchor : tuple[float, float],
+                     icon_h : int,
+                     text : str,
+                     text_color : int,
+                     fontsize : int,
+                     gap : int = 6,
+                     center_in_width : float | None = None) -> None:
+
+    """
+    Pastes icon (scaled to icon_h) at anchor, then draws text vertically
+    centered to its right. Used for the small icon+value stat chips.
+    If center_in_width is given, the whole icon+text group is centered
+    within that width instead of starting exactly at anchor.
+    """
+
+    icon_w = int(icon_h * icon.width / icon.height)
+    font = ImageFont.truetype(FONT_BOLD_CONDENSED, size = fontsize)
+    text_w = font.getlength(text)
+
+    x, y = anchor
+    if center_in_width is not None:
+        x += (center_in_width - (icon_w + gap + text_w)) / 2
+
+    icon_resized = icon.resize((icon_w, icon_h))
+    paste_with_transparency(display.image, icon_resized, (int(x), int(y)))
+
+    text_x = x + icon_w + gap
+    text_y = y + icon_h / 2
+    display.draw.text((text_x, text_y), text, fill = text_color, font = font, anchor = "lm")
+
+def _project_route_points(points : list[tuple],
+                           box_size : tuple[int, int],
+                           padding : int = 6) -> list[tuple[float, float]]:
+
+    """
+    Projects (lat, lon, ...) GPS points onto pixel coordinates that fit
+    inside box_size while preserving the route's real-world aspect
+    ratio. Any extra tuple elements (e.g. elevation) are ignored.
+    """
+
+    lats = [p[0] for p in points]
+    lons = [p[1] for p in points]
+    min_lat, max_lat = min(lats), max(lats)
+    min_lon, max_lon = min(lons), max(lons)
+
+    # LÄNGENGRAD-ABSTÄNDE SCHRUMPFEN MIT COS(BREITENGRAD) -> FÜR RICHTIGES SEITENVERHÄLTNIS KORRIGIEREN
+    lat_mid_rad = math.radians((min_lat + max_lat) / 2)
+    lon_range = (max_lon - min_lon) * math.cos(lat_mid_rad) or 1e-9
+    lat_range = (max_lat - min_lat) or 1e-9
+
+    avail_w = box_size[0] - 2 * padding
+    avail_h = box_size[1] - 2 * padding
+    scale = min(avail_w / lon_range, avail_h / lat_range)
+
+    drawn_w = lon_range * scale
+    drawn_h = lat_range * scale
+    offset_x = padding + (avail_w - drawn_w) / 2
+    offset_y = padding + (avail_h - drawn_h) / 2
+
+    pixel_points = []
+    for p in points:
+        x = offset_x + (p[1] - min_lon) * math.cos(lat_mid_rad) * scale
+        y = offset_y + (max_lat - p[0]) * scale  # BILD-Y WÄCHST NACH UNTEN, BREITENGRAD NACH OBEN
+        pixel_points.append((x, y))
+
+    return pixel_points
+
+STRAVA_ORANGE = (252, 76, 2, 255)
+
+ELEVATION_HEATMAP_STOPS = [
+    (0.00, (40, 70, 200)),    # NIEDRIG: BLAU
+    (0.35, (0, 170, 90)),     # GRÜN
+    (0.7, (240, 200, 20)),    # GELB
+    (1.00, (220, 30, 20)),    # HOCH: ROT
+]
+
+def _elevation_color(t : float) -> tuple[int, int, int, int]:
+
+    """
+    Maps a normalized elevation (0 = route minimum, 1 = route maximum)
+    to an RGBA heatmap color, interpolated across ELEVATION_HEATMAP_STOPS.
+    """
+
+    t = max(0.0, min(1.0, t))
+
+    for (t0, c0), (t1, c1) in zip(ELEVATION_HEATMAP_STOPS, ELEVATION_HEATMAP_STOPS[1:]):
+        if t <= t1:
+            local_t = (t - t0) / (t1 - t0) if t1 > t0 else 0
+            r = round(c0[0] + (c1[0] - c0[0]) * local_t)
+            g = round(c0[1] + (c1[1] - c0[1]) * local_t)
+            b = round(c0[2] + (c1[2] - c0[2]) * local_t)
+            return (r, g, b, 255)
+
+    return (*ELEVATION_HEATMAP_STOPS[-1][1], 255)
+
+def draw_route_card(display : Display,
+                     pal_img : Image.Image,
+                     anchor : tuple[int, int],
+                     size : tuple[int, int],
+                     points : list[tuple],
+                     padding : int = 14,
+                     line_width : int = 4) -> None:
+
+    """
+    Draws a schematic line drawing of a GPS route (list of (lat, lon)
+    or (lat, lon, elevation_m) tuples) on a transparent background.
+    With elevation data, the line is colored as an elevation heatmap
+    (blue = lowest point, red = highest); otherwise it falls back to a
+    plain Strava-orange line. True RGBA colors are dithered onto the
+    display's fixed e-ink palette (see to_spectra6), since none of
+    them exist in SPECTRA6_COLORS.
+    """
+
+    overlay = Image.new("RGBA", size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+
+    if len(points) >= 2:
+        pixel_points = _project_route_points(points, size, padding)
+        elevations = [p[2] if len(p) > 2 else None for p in points]
+
+        if all(e is not None for e in elevations) and min(elevations) < max(elevations):  # type: ignore[type-var]
+            min_ele, max_ele = min(elevations), max(elevations)  # type: ignore[type-var]
+            ele_range = max_ele - min_ele
+            for i in range(len(pixel_points) - 1):
+                t = (elevations[i] - min_ele) / ele_range
+                overlay_draw.line([pixel_points[i], pixel_points[i + 1]], fill = _elevation_color(t), width = line_width, joint = "curve")
+        else:
+            overlay_draw.line(pixel_points, fill = STRAVA_ORANGE, width = line_width, joint = "curve")
+    else:
+        font = ImageFont.truetype(FONT_REGULAR_CONDENSED, size = 13)
+        overlay_draw.text((size[0] / 2, size[1] / 2), "Keine GPS-Daten", fill = (0, 0, 0, 255), font = font, anchor = "mm")
+
+    quantized = to_spectra6(overlay, pal_img)
+    paste_with_transparency(display.image, quantized, anchor)
+
+def render_stat_block(display : Display,
+                       pal_img : Image.Image,
+                       anchor : tuple[int, int],
+                       size : tuple[int, int],
+                       entries : list[dict]) -> None:
+
+    """
+    Draws a set of text entries (each a dict with text, rel_pos, color
+    (RGBA tuple), fontsize, and optionally bold/condensed/anchor) onto
+    one transparent overlay, then dithers it onto the e-ink palette in
+    a single pass. Lets a block mix crisp black text with colors like
+    Strava orange or gray that don't exist in SPECTRA6_COLORS.
+    """
+
+    overlay = Image.new("RGBA", size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+
+    for entry in entries:
+        font = _select_font(entry["fontsize"], entry.get("bold", True), entry.get("condensed", False))
+        x = entry["rel_pos"][0] * size[0]
+        y = entry["rel_pos"][1] * size[1]
+        overlay_draw.text((x, y), entry["text"], fill = entry["color"], font = font, anchor = entry.get("anchor", "mm"))
+
+    quantized = to_spectra6(overlay, pal_img)
+    paste_with_transparency(display.image, quantized, anchor)
 
 def format_duration(minutes : float) -> str:
 
@@ -250,6 +423,7 @@ def generate_greeting() -> str:
 
 def make_gui(data : dict) -> Image.Image:
 
+
     display = Display()
     pal_img = get_palette_image()
     logo = load_logo(pal_img, variant = "orange")
@@ -275,7 +449,8 @@ def make_gui(data : dict) -> Image.Image:
     header.add_text(format_german_date(datetime.now()), (text_x, 0.68), BLACK, fontsize = 12, condensed = True, anchor = "lm")
     header.draw_box(display.draw)
 
-    display.draw.rectangle((0, HEADER_H - 3, display.size[0], HEADER_H), fill = RED)
+    divider = GUIBox((display.size[0], 3), (0, HEADER_H - 3), WHITE)
+    divider.draw_dithered(display.draw, BLACK, WHITE, dither_count = 2)
 
     logo_resized = logo.resize((logo_w, logo_h))
     paste_with_transparency(display.image, logo_resized, (MARGIN, (HEADER_H - logo_h) // 2))
@@ -289,64 +464,104 @@ def make_gui(data : dict) -> Image.Image:
 
     # LEFT COLUMN: RECENT ACTIVITIES
     recent = data.get("recent_activities") or []
-
+    last_act_name : str = recent[0].get("name", "-")
     left_label = GUIBox((left_w, LABEL_H), (MARGIN, content_y), WHITE)
-    left_label.add_text("LETZTE AKTIVITÄTEN", (0.5, 0.5), BLACK, fontsize = 14, bold = True, anchor = "mm")
+    
+    left_label.add_text(last_act_name, (0.5, 0.5), BLACK, fontsize = 20, bold = True, anchor = "mm")
+
     left_label.draw_box(display.draw)
+
+
 
     rows_y = content_y + LABEL_H + GAP // 2
     rows_h = content_h - LABEL_H - GAP // 2
-    n_rows = max(len(recent), 1)
-    row_h = (rows_h - GAP * (n_rows - 1)) // n_rows
 
-    for i, act in enumerate(recent):
+    # INFO-BOX MIT DEN KENNZAHLEN DER LETZTEN AKTIVITÄT (GESCHWINDIGKEIT, HÖHENMETER, DISTANZ)
+    INFO_BOX_H = 48
+    info_box = GUIBox((left_w, INFO_BOX_H), (MARGIN, rows_y), WHITE)
+    info_box.draw_box(display.draw)
 
-        row = GUIBox((left_w, row_h), (MARGIN, rows_y + i * (row_h + GAP)), WHITE, outline_color = BLACK)
-        row.add_text(str(act.get("date", "-")), (0.5, 0.14), BLACK, fontsize = 11, condensed = True, anchor = "ma")
-        row.add_text(str(act.get("name", "-"))[:26], (0.5, 0.42), BLACK, fontsize = 15, bold = True, anchor = "ma")
-        row.add_text(f"{act.get('distance_km', 0):.1f} km  ·  {act.get('elevation_gain_m', 0)} hm", (0.5, 0.74), BLUE, fontsize = 12, bold = True, anchor = "ma")
-        row.draw_box(display.draw)
+    last_act = recent[0] if recent else {}
+    avg_speed = last_act.get("average_speed_kmh")
+    stat_chips = [
+        ("speed.jpg", f"{avg_speed:.1f} km/h" if avg_speed is not None else "-"),
+        ("ascent_icon.jpg", f"{last_act.get('elevation_gain_m', 0)} m"),
+        ("distance_icon.jpeg", f"{last_act.get('distance_km', 0):.1f} km"),
+    ]
 
-    if not recent:
-        empty_row = GUIBox((left_w, rows_h), (MARGIN, rows_y), WHITE, outline_color = BLACK)
-        empty_row.add_text("Keine Aktivitäten gefunden", (0.5, 0.5), BLACK, fontsize = 13, anchor = "mm")
-        empty_row.draw_box(display.draw)
+    icon_h = 30
+    col_w = left_w / len(stat_chips)
 
-    # RIGHT COLUMN: YEAR-TO-DATE STATS + LAST ACTIVITY
+    for i, (icon_filename, value_text) in enumerate(stat_chips):
+        icon = load_icon(pal_img, icon_filename)
+        col_x = MARGIN + i * col_w
+        icon_anchor = (col_x, rows_y + (INFO_BOX_H - icon_h) / 2)
+        draw_icon_value(display, icon, icon_anchor, icon_h, value_text, BLACK, fontsize = 18, center_in_width = col_w)
+
+    # ROUTE-SCHEMA DER LETZTEN AKTIVITÄT
+    route_y = rows_y + INFO_BOX_H + GAP
+    route_h = rows_h - INFO_BOX_H - GAP
+    route_points = data.get("last_activity_route") or []
+    draw_route_card(display, pal_img, (MARGIN, route_y), (left_w, route_h), route_points, padding = 14)
+
+    # RIGHT COLUMN: YEAR-TO-DATE STATS
     ytd = data.get("ytd") or {}
-    last = data.get("last_activity")
+    ytd_distance_km = ytd.get("distance_km", 0)
+    ytd_elevation_m = ytd.get("elevation_gain_m", 0)
+    earth_pct = ytd_distance_km / EARTH_CIRCUMFERENCE_KM * 100
+    everest_x = ytd_elevation_m / EVEREST_HEIGHT_M
+
+    best_efforts = data.get("best_power_efforts") or {}
 
     right_label = GUIBox((right_w, LABEL_H), (right_x, content_y), WHITE)
-    right_label.add_text("DIESES JAHR", (0.5, 0.5), BLACK, fontsize = 14, bold = True, anchor = "mm")
+    right_label.add_text("DIESES JAHR", (0.5, 0.5), BLACK, fontsize = 20, bold = True, anchor = "mm")
     right_label.draw_box(display.draw)
 
-    stat_area_y = content_y + LABEL_H + GAP // 2
-    stat_area_h = content_h - LABEL_H - GAP // 2
-    stat_block_h = int(stat_area_h * 0.34)
-    footer_h = stat_area_h - 2 * stat_block_h - 2 * GAP
+    N_BLOCKS = 3
+    DIVIDER_GAP = 8
+    DIVIDER_THICKNESS = 3
+    divider_center_x = right_x + right_w / 2
+    divider_w = int(right_w * 0.9)
 
-    distance_block = GUIBox((right_w, stat_block_h), (right_x, stat_area_y), WHITE, outline_color = BLACK)
-    distance_block.add_text("GESAMTDISTANZ", (0.5, 0.24), BLACK, fontsize = 12, bold = True, anchor = "mm")
-    distance_block.add_text(f"{ytd.get('distance_km', 0):.1f} km", (0.5, 0.62), BLUE, fontsize = 24, bold = True, anchor = "mm")
-    distance_block.draw_box(display.draw)
+    stat_area_y = content_y + LABEL_H + 6
+    stat_area_h = content_h - LABEL_H - 6
+    dividers_h = (N_BLOCKS - 1) * (2 * DIVIDER_GAP + DIVIDER_THICKNESS)
+    block_h = int((stat_area_h - dividers_h) / N_BLOCKS)
 
-    elevation_block_y = stat_area_y + stat_block_h + GAP
-    elevation_block = GUIBox((right_w, stat_block_h), (right_x, elevation_block_y), WHITE, outline_color = BLACK)
-    elevation_block.add_text("HÖHENMETER", (0.5, 0.24), BLACK, fontsize = 12, bold = True, anchor = "mm")
-    elevation_block.add_text(f"{ytd.get('elevation_gain_m', 0)} m", (0.5, 0.62), RED, fontsize = 24, bold = True, anchor = "mm")
-    elevation_block.draw_box(display.draw)
+    y = stat_area_y
 
-    footer_y = elevation_block_y + stat_block_h + GAP
-    footer = GUIBox((right_w, footer_h), (right_x, footer_y), WHITE, outline_color = BLACK)
-    footer.add_text("LETZTE AKTIVITÄT", (0.5, 0.2), BLACK, fontsize = 11, bold = True, anchor = "mm")
+    render_stat_block(display, pal_img, (right_x, y), (right_w, block_h), [
+        {"text": "GESAMTDISTANZ", "rel_pos": (0.5, 0.18), "color": (0, 0, 0, 255), "fontsize": 16, "bold": False},
+        {"text": f"{ytd_distance_km:.1f} km", "rel_pos": (0.5, 0.54), "color": STRAVA_ORANGE, "fontsize": 26},
+        {"text": f"{earth_pct:.2f}% der Erdumrundung", "rel_pos": (0.5, 0.84), "color": (0, 0, 0, 255), "fontsize": 14, "bold": False, "condensed": True},
+    ])
+    y += block_h
 
-    if last:
-        footer.add_text(str(last.get("name", "-"))[:22], (0.5, 0.5), BLACK, fontsize = 13, bold = True, anchor = "mm")
-        footer.add_text(f"{last.get('date', '-')}  ·  {last.get('distance_km', 0):.1f} km", (0.5, 0.78), BLACK, fontsize = 11, condensed = True, anchor = "mm")
-    else:
-        footer.add_text("Keine Aktivität", (0.5, 0.55), BLACK, fontsize = 12, anchor = "mm")
+    y += DIVIDER_GAP
+    draw_light_divider(display, divider_center_x, y, divider_w)
+    y += DIVIDER_GAP + DIVIDER_THICKNESS
 
-    footer.draw_box(display.draw)
+    render_stat_block(display, pal_img, (right_x, y), (right_w, block_h), [
+        {"text": "HÖHENMETER", "rel_pos": (0.5, 0.18), "color": (0, 0, 0, 255), "fontsize": 16, "bold": False},
+        {"text": f"{ytd_elevation_m:.0f} m", "rel_pos": (0.5, 0.54), "color": STRAVA_ORANGE, "fontsize": 26},
+        {"text": f"{everest_x:.1f}× Mount Everest", "rel_pos": (0.5, 0.84), "color": (0, 0, 0, 255), "fontsize": 14, "bold": False, "condensed": True},
+    ])
+    y += block_h
+
+    y += DIVIDER_GAP
+    draw_light_divider(display, divider_center_x, y, divider_w)
+    y += DIVIDER_GAP + DIVIDER_THICKNESS
+
+    best_efforts_entries = [
+        {"text": "BESTLEISTUNG (W)", "rel_pos": (0.5, 0.18), "color": (0, 0, 0, 255), "fontsize": 16, "bold": False},
+    ]
+    for i, duration_min in enumerate((60, 20, 5)):
+        col_x = (i + 0.5) / 3
+        value = best_efforts.get(duration_min)
+        best_efforts_entries.append({"text": f"{duration_min} MIN", "rel_pos": (col_x, 0.52), "color": (0, 0, 0, 255), "fontsize": 13, "bold": False, "condensed": True})
+        best_efforts_entries.append({"text": f"{value}" if value is not None else "-", "rel_pos": (col_x, 0.84), "color": STRAVA_ORANGE, "fontsize": 20})
+
+    render_stat_block(display, pal_img, (right_x, y), (right_w, block_h), best_efforts_entries)
 
     return display.image
 
@@ -363,34 +578,3 @@ def render_dashboard(data : dict, output_path : str | None = None) -> Image.Imag
         image.convert("RGB").save(output_path)
 
     return image
-
-if __name__ == "__main__":
-
-    # DUMMY-DATEN ZUM TESTEN DES RENDERINGS OHNE STRAVA-API
-    dummy_data = {
-        "athlete_name": "Johannes",
-        "ytd": {
-            "distance_km": 1243.7,
-            "moving_time_min": 5310,
-            "elevation_gain_m": 15200,
-            "activity_count": 87,
-        },
-        "last_activity": {
-            "name": "Feierabendrunde",
-            "date": "22.08.2026",
-            "sport_type": "Ride",
-            "distance_km": 42.1,
-            "moving_time_min": 95,
-            "elevation_gain_m": 620,
-            "average_watts": 187,
-        },
-        "recent_activities": [
-            {"name": "Feierabendrunde", "date": "22.08.2026", "distance_km": 42.1, "elevation_gain_m": 620},
-            {"name": "Sonntags-Runde", "date": "17.08.2026", "distance_km": 65.4, "elevation_gain_m": 1200},
-            {"name": "Trail-Abenteuer", "date": "15.08.2026", "distance_km": 31.8, "elevation_gain_m": 1100},
-            {"name": "Nachtlauf", "date": "13.08.2026", "distance_km": 8.4, "elevation_gain_m": 90},
-        ],
-    }
-
-    dashboard_image = render_dashboard(dummy_data)
-    dashboard_image.show()

@@ -1,12 +1,7 @@
-import stravalib 
+import stravalib
 from dotenv import set_key
 import os
 from datetime import datetime
-import polyline
-import gpxpy
-import gpxpy.gpx
-from pathlib import Path
-import re
 
 
 def api_setup(dotenv_path : str) -> None:
@@ -95,6 +90,7 @@ def _duration_seconds(duration) -> float:
 def _activity_to_dict(act) -> dict:
 
     return {
+        "id": act.id,
         "name": act.name,
         "date": act.start_date_local.strftime("%d.%m.%Y") if act.start_date_local else None,
         "sport_type": str(act.sport_type) if act.sport_type else None,
@@ -102,6 +98,7 @@ def _activity_to_dict(act) -> dict:
         "moving_time_min": round(_duration_seconds(act.moving_time) / 60),
         "elevation_gain_m": round(float(act.total_elevation_gain)) if act.total_elevation_gain is not None else 0,
         "average_watts": round(act.average_watts) if act.average_watts is not None else None,
+        "average_speed_kmh": round(float(act.average_speed) * 3.6, 1) if act.average_speed is not None else None,
     }
 
 def get_recent_activities(client : stravalib.Client, n : int) -> list[dict]:
@@ -111,6 +108,28 @@ def get_recent_activities(client : stravalib.Client, n : int) -> list[dict]:
     """
 
     return [_activity_to_dict(act) for act in client.get_activities(limit = n)]
+
+def get_last_activity_route(streams : dict) -> list[tuple[float, float, float | None]]:
+
+    """
+    Returns the GPS track of an activity as a list of (lat, lon,
+    elevation_m) points, read from its latlng and altitude streams
+    (see get_activity_streams()). elevation_m is
+    None if no altitude data exists for that point (e.g. an indoor or
+    GPS-only recording).
+    """
+
+    latlng_stream = streams.get("latlng") if streams else None
+    if latlng_stream is None:
+        return []
+
+    altitude_stream = streams.get("altitude") if streams else None
+    altitudes = altitude_stream.data if altitude_stream is not None else None
+
+    return [
+        (lat, lon, altitudes[i] if altitudes is not None and i < len(altitudes) else None)
+        for i, (lat, lon) in enumerate(latlng_stream.data)
+    ]
 
 def get_ytd_stats(client : stravalib.Client) -> dict:
 
@@ -156,48 +175,85 @@ def get_athlete_name(client : stravalib.Client) -> str:
 
     return athlete.firstname or ""
 
-def get_dashboard_data(client : stravalib.Client, n_recent : int = 4) -> dict:
+def get_activity_streams(client : stravalib.Client, activity_id : int) -> dict:
+
+    """
+    Fetches every stream the dashboard needs (GPS track, altitude,
+    time, power) for one activity in a single API call, so callers
+    like get_last_activity_route() and get_best_power_efforts() don't
+    each make their own round trip for the same activity.
+    """
+
+    return client.get_activity_streams(activity_id, types = ["latlng", "altitude", "time", "watts"])
+
+def _best_avg_power(times : list[float], watts : list[float], window_seconds : int) -> float | None:
+
+    """
+    Sliding-window scan (by elapsed time, not sample count, since stream
+    sampling isn't always exactly 1Hz) for the highest average power
+    over the given window length. Returns None if the activity doesn't
+    reach that duration.
+    """
+
+    if not times or not watts:
+        return None
+
+    best_avg = None
+    left = 0
+    running_sum = 0.0
+
+    for right in range(len(times)):
+
+        running_sum += watts[right]
+
+        while times[right] - times[left] > window_seconds:
+            running_sum -= watts[left]
+            left += 1
+
+        elapsed = times[right] - times[left]
+        if elapsed >= window_seconds - 1:
+            avg = running_sum / (right - left + 1)
+            if best_avg is None or avg > best_avg:
+                best_avg = avg
+
+    return best_avg
+
+def get_best_power_efforts(streams : dict, durations_min : tuple[int, ...] = (60, 20, 5)) -> dict:
+
+    """
+    Returns the best average power (W) for each given duration in
+    minutes, keyed by duration, read from an activity's time and watts
+    streams (see get_activity_streams_for_last_activity()). None for a
+    duration the activity doesn't reach, or if there's no power data.
+    """
+
+    time_stream = streams.get("time") if streams else None
+    watts_stream = streams.get("watts") if streams else None
+
+    if time_stream is None or watts_stream is None:
+        return {d: None for d in durations_min}
+
+    return {
+        d: round(best_avg) if (best_avg := _best_avg_power(time_stream.data, watts_stream.data, d * 60)) is not None else None
+        for d in durations_min
+    }
+
+def get_dashboard_data(client : stravalib.Client, n_recent : int = 1) -> dict:
 
     """
     Pulls and calculates everything the display needs in one call.
     """
 
     recent_activities = get_recent_activities(client, n_recent)
+    last_activity = recent_activities[0] if recent_activities else None
+
+    streams = get_activity_streams(client, last_activity["id"]) if last_activity else {}
 
     return {
         "athlete_name": get_athlete_name(client),
         "ytd": get_ytd_stats(client),
-        "last_activity": recent_activities[0] if recent_activities else None,
+        "last_activity": last_activity,
         "recent_activities": recent_activities,
+        "last_activity_route": get_last_activity_route(streams),
+        "best_power_efforts": get_best_power_efforts(streams),
     }
-
-def segment_gpx(client : stravalib.Client, segment_id : int) -> None:
-    
-    gpx_output_dir = Path(__file__).resolve().parent.parent / "gpx-output"
-    gpx_output_dir.mkdir(parents = True, exist_ok = True)
-
-    seg = client.get_segment(segment_id = segment_id)
-    if seg.map is None or seg.map.polyline is None:
-        raise ValueError(f"Segment {segment_id} has no map polyline data")
-
-    polyline_str = seg.map.polyline
-    coors = polyline.decode(polyline_str)
-
-    gpx = gpxpy.gpx.GPX()
-
-    gpx_track = gpxpy.gpx.GPXTrack(name = seg.name)
-    gpx.tracks.append(gpx_track)
-
-    gpx_segment = gpxpy.gpx.GPXTrackSegment()
-    gpx_track.segments.append(gpx_segment)
-
-    for lat,long in coors:
-        trackpoint = gpxpy.gpx.GPXTrackPoint(latitude = lat, longitude = long)
-        gpx_segment.points.append(trackpoint)
-    
-    segment_name = seg.name or "segment"
-    safe_name = re.sub(r'[\\/*?:"<> |]', '_', segment_name)
-    filename = gpx_output_dir / f"{safe_name}.gpx"
-
-    with open(filename, "w", encoding = "utf-8") as gpx_file:
-        gpx_file.write(gpx.to_xml())

@@ -1,0 +1,17 @@
+[Unit]
+Description=Strava E-Paper Dashboard
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=pi
+WorkingDirectory=/home/pi/strava-api-display
+ExecStart=/usr/bin/docker run --rm \
+  --name strava-dashboard-run \
+  --device /dev/spidev0.0 \
+  --device /dev/gpiomem \
+  -v /home/pi/strava-api-display/.env:/app/.env \
+  -v /home/pi/strava-api-display/output:/app/output \
+  strava-dashboard:latest
