@@ -53,7 +53,7 @@ graph LR
 
 **Verantwortlichkeiten:**
 
-| Modul                    | Zuständigkeit |
+| Modul | Zuständigkeit |
 | ------------------------ | ------------- |
 | `main.py` | Orchestriert den Ablauf: Auth-Status prüfen, Daten holen, Bild rendern, optional aufs Display schreiben. |
 | `backend/api_reader.py` | Einziger Ort mit Strava-API-Zugriff (`stravalib`). Liefert reine Python-`dict`/`list`-Daten, keine Bild- oder Display-Logik. |
@@ -178,7 +178,7 @@ unterstützen ARMv6 nicht mehr, und der Chip ist nicht 64-bit-fähig).
 6. Testlauf:
 
     ```sh
-    PYTHONPATH=~/e-Paper/RaspberryPi_JetsonNano/python/lib .venv/bin/python main.py
+    PYTHONPATH=~/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib .venv/bin/python main.py
     ```
 
     Kein `.env` mit gültigen Tokens dabei? Dann läuft hier interaktiv der
@@ -213,7 +213,7 @@ Alternativ genügt auch ein Cron-Eintrag (`crontab -e`), falls kein systemd
 gewünscht ist:
 
 ```cron
-*/30 * * * * cd /home/jschoenau/strava-api-display && PYTHONPATH=/home/jschoenau/e-Paper/RaspberryPi_JetsonNano/python/lib .venv/bin/python main.py >> /home/jschoenau/strava-api-display/cron.log 2>&1
+*/30 * * * * cd /home/jschoenau/strava-api-display && PYTHONPATH=/home/jschoenau/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib .venv/bin/python main.py >> /home/jschoenau/strava-api-display/cron.log 2>&1
 ```
 
 ## Lokal testen (ohne Display)
@@ -251,24 +251,31 @@ Gibt ausschließlich einfache `dict`/`list`-Strukturen zurück – keine
 `stravalib`-Objekte, kein PIL.
 
 #### `api_setup(dotenv_path: str) -> None`
+
 Interaktiver Erstverbindungs-Flow: öffnet die Strava-OAuth-URL, fragt den
 Callback-Code ab, tauscht ihn gegen Access-/Refresh-Token und schreibt beide
 plus `STRAVA_EXPIRES_AT` in die `.env`-Datei.
+
 - **Parameter:** `dotenv_path` – Pfad zur `.env`-Datei.
 - **Voraussetzung:** `STRAVA_CLIENT_ID` / `STRAVA_CLIENT_SECRET` müssen bereits in der Umgebung gesetzt sein.
 
 #### `refresh_api_access(dotenv_path: str) -> None`
+
 Erneuert ein abgelaufenes Access-Token per Refresh-Token und aktualisiert
 `STRAVA_ACCESS_TOKEN` / `STRAVA_EXPIRES_AT` in der `.env`-Datei.
+
 - **Parameter:** `dotenv_path` – Pfad zur `.env`-Datei.
 
 #### `get_recent_activities(client: stravalib.Client, n: int) -> list[dict]`
+
 Liefert die letzten `n` Aktivitäten (neueste zuerst) als vereinfachte Dicts
 (`id`, `name`, `date`, `sport_type`, `distance_km`, `moving_time_min`,
 `elevation_gain_m`, `average_watts`, `average_speed_kmh`).
+
 - **Parameter:** `n` – Anzahl der Aktivitäten.
 
 #### `get_activity_streams(client: stravalib.Client, activity_id: int) -> dict`
+
 Holt alle vom Dashboard benötigten Streams (`latlng`, `altitude`, `time`,
 `watts`) einer Aktivität in **einem** API-Call. `get_dashboard_data()` ruft
 das genau einmal für die letzte Aktivität auf und reicht das Ergebnis an
@@ -276,25 +283,31 @@ das genau einmal für die letzte Aktivität auf und reicht das Ergebnis an
 jede Funktion ihre eigenen Streams (und die Aktivität selbst) separat abruft.
 
 #### `get_last_activity_route(streams: dict) -> list[tuple[float, float, float | None]]`
+
 Liefert den GPS-Track als Liste von `(lat, lon, elevation_m)`-Punkten aus den
 `latlng`-/`altitude`-Streams (siehe `get_activity_streams()`). `elevation_m`
 ist `None`, wenn für den Punkt keine Höhendaten vorliegen (z. B. Indoor-Aktivität).
 
 #### `get_ytd_stats(client: stravalib.Client) -> dict`
+
 Aggregiert die Year-to-Date-Summen über Rad/Lauf/Schwimmen zu einem einzigen
 Dict: `distance_km`, `moving_time_min`, `elevation_gain_m`, `activity_count`.
 
 #### `get_athlete_name(client: stravalib.Client) -> str`
+
 Liefert den Vornamen des verbundenen Athleten (leerer String, falls nicht gesetzt).
 
 #### `get_best_power_efforts(streams: dict, durations_min: tuple[int, ...] = (60, 20, 5)) -> dict`
+
 Berechnet für jede angegebene Dauer (in Minuten) die beste
 Durchschnittsleistung (Watt), per zeitbasiertem Sliding-Window über die
 `time`-/`watts`-Streams aus `get_activity_streams()` (kein Sample-Zähl-Fehler
 bei unregelmäßiger Aufzeichnungsrate). Ergebnis z. B. `{60: 245, 20: 268, 5: 340}`.
+
 - **Rückgabe:** `None` für eine Dauer, die die Aktivität nicht erreicht, oder wenn gar keine Leistungsdaten vorhanden sind.
 
 #### `get_dashboard_data(client: stravalib.Client, n_recent: int = 1) -> dict`
+
 **Haupteinstiegspunkt** des Moduls – bündelt alle obigen Abrufe zu genau dem
 Dict, das `display.render_dashboard()` erwartet:
 
@@ -320,18 +333,23 @@ Baut aus dem Dashboard-Dict ein `PIL.Image` (Modus `P`, feste
 SPECTRA6-Palette). Reiner Rendering-Code, kein Netzwerkzugriff.
 
 #### `class Display(size=(600, 400), colors=SPECTRA6_COLORS)`
+
 Container für das Ziel-`Image` (`.image`), den zugehörigen `ImageDraw`
 (`.draw`) und die Palette. Ein neues `Display()` startet immer mit weißem
 Hintergrund.
 
 #### `class GUIBox(size, anchor, backgroud_color, outline_color=None, outline_width=2)`
+
 Rechteck mit fester Palettenfarbe plus optionalem Text. Zentraler
 Baustein für alle rechteckigen UI-Elemente (Header, Labels, Stat-Blöcke).
+
 - `add_text(text, rel_anchor, text_color, fontsize, bold=False, condensed=False, anchor="la")` – merkt sich einen Text relativ zur Box (0–1-Koordinaten), gezeichnet erst bei `draw_box()`.
+
 - `draw_dithered(draw, color_1, color_2, dither_count=2)` – füllt die Box mit einem Schwarz/Weiß-Schachbrettmuster (für "hellgrau" auf der 2-Farb-Halbtonebene, z. B. Divider).
 - `draw_box(draw)` – zeichnet Rechteck + alle gemerkten Texte.
 
 #### `to_spectra6(img_rgba: Image, pal_img: Image, transparent_index=TRANSPARENT_INDEX) -> Image`
+
 Quantisiert ein beliebiges RGBA-Bild (echte Farben wie Strava-Orange oder
 ein Höhen-Farbverlauf) per Floyd-Steinberg-Dithering auf die 6-Farb-Palette
 und macht vollständig transparente Pixel per Paletten-Index durchsichtig.
@@ -339,37 +357,46 @@ Kernstück des "beliebige Farbe auf 6-Farb-Display"-Tricks, siehe
 [Design-Hinweise](#design-hinweise-farben-auf-der-6-farb-palette).
 
 #### `image_cleanup(image: Image) -> Image`
+
 Normalisiert ein geladenes Icon/Logo: (fast) transparente Pixel werden voll
 transparent, alle anderen voll opak. Entfernt Kompressionsartefakte an
 Rändern vor dem Quantisieren.
 
 #### `get_palette_image() -> Image`
+
 Erstellt das 1×1-Referenzbild mit der SPECTRA6-Palette, das `quantize()`
 als Zielpalette braucht.
 
 #### `load_icon(pal_img: Image, filename: str) -> Image`
+
 Lädt eine Bilddatei aus `display/img/`, bereinigt sie (`image_cleanup`) und
 quantisiert sie auf die Palette (`to_spectra6`).
 
 #### `load_logo(pal_img: Image, variant="white") -> Image`
+
 Kurzform von `load_icon()` für `strava-logo-full-{variant}.png`.
 
 #### `paste_with_transparency(base_image: Image, overlay: Image, position) -> None`
+
 Fügt ein bereits quantisiertes Bild transparenzkorrekt in `base_image` ein
 (Paletten-Index `TRANSPARENT_INDEX` wird zur Paste-Maske).
 
 #### `draw_light_divider(display, center_x, y, width, thickness=3) -> None`
+
 Zeichnet einen hellgrauen, geditherten Trennbalken (Schwarz/Weiß-Schachbrett),
 zentriert auf `center_x`.
 
 #### `draw_icon_value(display, icon, anchor, icon_h, text, text_color, fontsize, gap=6, center_in_width=None) -> None`
+
 Fügt ein Icon (auf `icon_h` skaliert) ein und schreibt vertikal zentriert
 Text daneben. Mit `center_in_width` wird die Icon+Text-Gruppe in dieser
 Breite zentriert statt links ausgerichtet – genutzt für die
 Geschwindigkeit/Höhenmeter/Distanz-Chips.
 
 #### `draw_route_card(display, pal_img, anchor, size, points, padding=14, line_width=4) -> None`
+
 Zeichnet die Routen-Silhouette der letzten Aktivität:
+
 - `points` = Liste von `(lat, lon)` oder `(lat, lon, elevation_m)` (siehe `get_last_activity_route()`).
 - Liegen für **alle** Punkte Höhendaten vor und gibt es einen Höhenunterschied, wird die Linie segmentweise als **Höhen-Heatmap** gefärbt (Blau → Grün → Gelb → Rot, siehe `_elevation_color`).
 - Sonst Fallback: einfarbige Strava-Orange-Linie.
@@ -377,6 +404,7 @@ Zeichnet die Routen-Silhouette der letzten Aktivität:
 - Projektion via `_project_route_points()` (längengradkorrigiert, seitenverhältnistreu, zentriert in `size`).
 
 #### `render_stat_block(display, pal_img, anchor, size, entries: list[dict]) -> None`
+
 Generischer Mehrfarben-Textblock: zeichnet mehrere Text-Einträge
 (`text`, `rel_pos`, `color` als RGBA, `fontsize`, optional `bold`/
 `condensed`/`anchor`) auf **einem** Overlay und dithert sie in einem
@@ -385,23 +413,28 @@ Untertitel gemeinsam sauber quantisieren. Basis der drei Stat-Blöcke
 (Distanz, Höhenmeter, Bestleistungen) in der rechten Spalte.
 
 #### `format_duration(minutes: float) -> str`
+
 Formatiert Minuten als `"1h 05min"` bzw. `"45min"`.
 
 #### `format_german_date(dt: datetime) -> str`
+
 Formatiert ein Datum ohne Abhängigkeit von der `de_DE`-Systemlocale
 (auf dem Pi oft nicht installiert), z. B. `"Sonntag, 23. August 2026"`.
 
 #### `generate_greeting() -> str`
+
 Tageszeitabhängige Begrüßung ("Guten Morgen" / "Guten Tag" / "Guten Abend" /
 "Gute Nacht" / "Hallo").
 
 #### `make_gui(data: dict) -> Image`
+
 Baut das komplette Dashboard-Layout (Header mit Logo/Gruß/Datum,
 Aktivitäts-Titel, Stat-Chips, Routen-Heatmap links; Jahres-Distanz,
 Höhenmeter, Bestleistungen rechts) aus dem `data`-Dict
 (Format siehe [`get_dashboard_data()`](#get_dashboard_dataclient-stravalibclient-n_recent-int--1---dict)).
 
 #### `render_dashboard(data: dict, output_path: str | None = None) -> Image`
+
 **Öffentlicher Haupteinstiegspunkt** des Moduls: ruft `make_gui(data)` auf
 und speichert das Ergebnis optional als PNG (`RGB`-konvertiert) unter
 `output_path`.
@@ -417,11 +450,14 @@ Dünner Wrapper um die vendor-eigene `waveshare_epd`-Python-Bibliothek.
 Einziger Ort im Projekt mit direktem Hardwarezugriff (SPI).
 
 #### `update_display(image: Image, driver_name: str = "epd4in0e") -> None`
+
 Initialisiert den Waveshare-Treiber, sendet das Bild ans Panel und schickt
 es danach in den Sleep-Modus. Erwartet exakt `600×400` px.
+
 - **Wirft:** `ValueError` bei falscher Bildgröße, `RuntimeError` falls `waveshare_epd` nicht installiert ist.
 
 #### `update_display_from_file(image_path: str | Path, driver_name: str = "epd4in0e") -> None`
+
 Lädt ein PNG von der Festplatte und ruft `update_display()` auf.
 
 ---
