@@ -132,28 +132,27 @@ Größe: 600×400 (4")
 
 ### Controller
 
-> Raspberry Pi Zero 2 W
+> Raspberry Pi Zero W
 
-[Details](https://www.raspberrypi.com/products/raspberry-pi-zero-2-w/)
+[Details](https://www.raspberrypi.com/products/raspberry-pi-zero-w/)
 
-### Raspberry Pi einrichten (Docker)
+Single-Core ARM1176JZF-S @ 1GHz, 512 MB RAM, **ARMv6**. Deployment läuft
+deshalb nativ über eine venv (kein Docker – moderne Container-Images
+unterstützen ARMv6 nicht mehr, und der Chip ist nicht 64-bit-fähig).
 
-Läuft als Container – das [`Dockerfile`](Dockerfile) installiert Python-Deps
-und klont die Waveshare-Bibliothek selbst hinein, es muss also nichts davon
-manuell auf dem Pi installiert werden. Nur SPI/Docker sind Systemvoraussetzungen.
+### Raspberry Pi einrichten
 
-1. Raspberry Pi OS (64-bit) installieren, SPI in `raspi-config` aktivieren
-   (`sudo raspi-config` → *Interface Options* → *SPI* → *Yes*, oder
-   `sudo raspi-config nonint do_spi 0`) und das Display mit aufgesetztem HAT
-   am GPIO-Header anschließen. Danach neu starten.
-2. Docker installieren und den eigenen Benutzer der `docker`-Gruppe hinzufügen:
+1. Raspberry Pi OS Lite (32-bit – das einzige Angebot für ARMv6) installieren,
+   SPI in `raspi-config` aktivieren (`sudo raspi-config` → *Interface Options*
+   → *SPI* → *Yes*, oder `sudo raspi-config nonint do_spi 0`) und das Display
+   mit aufgesetztem HAT am GPIO-Header anschließen. Danach neu starten.
+2. Die offizielle Waveshare-Python-Bibliothek auf dem Pi installieren. Sie muss `waveshare_epd.epd4in0e` bereitstellen:
 
     ```sh
-    curl -sSL https://get.docker.com | sh
-    sudo usermod -aG docker $USER
+    git clone --depth 1 https://github.com/waveshareteam/e-Paper.git ~/e-Paper
     ```
 
-    Danach aus- und wieder einloggen (bzw. neue SSH-Session öffnen), damit die Gruppenmitgliedschaft greift.
+    (Wird unten per `PYTHONPATH` eingebunden statt separat installiert, siehe Service-Unit.)
 
 3. Projekt auf den Pi kopieren, z. B. per `rsync` von deinem Rechner aus:
 
@@ -162,40 +161,38 @@ manuell auf dem Pi installiert werden. Nur SPI/Docker sind Systemvoraussetzungen
       ./ <pi-user>@<pi-host>:~/strava-api-display/
     ```
 
-4. `.env` mit den Strava-Zugangsdaten (und – falls schon lokal verbunden – den
-   bereits gültigen Tokens) ins Projektverzeichnis auf dem Pi kopieren, `STRAVA_UPDATE_DISPLAY=1` setzen.
-5. Image bauen:
+4. Virtuelle Umgebung anlegen und Abhängigkeiten installieren (`spidev`/`RPi.GPIO`
+   kompilieren aus dem Quellcode, dafür ggf. erst `build-essential`/`python3-dev`
+   installieren, falls das fehlschlägt):
 
     ```sh
+    sudo apt-get install -y build-essential python3-dev python3-venv
     cd ~/strava-api-display
-    docker build -t strava-dashboard .
+    python3 -m venv .venv
+    .venv/bin/pip install -r requirements.txt
+    .venv/bin/pip install spidev RPi.GPIO
     ```
 
+5. `.env` mit den Strava-Zugangsdaten (und – falls schon lokal verbunden – den
+   bereits gültigen Tokens) ins Projektverzeichnis kopieren, `STRAVA_UPDATE_DISPLAY=1` setzen.
 6. Testlauf:
 
     ```sh
-    mkdir -p output
-    docker run --rm \
-      --device /dev/spidev0.0 --device /dev/gpiomem \
-      -v ~/strava-api-display/.env:/app/.env \
-      -v ~/strava-api-display/output:/app/output \
-      strava-dashboard
+    PYTHONPATH=~/e-Paper/RaspberryPi_JetsonNano/python/lib .venv/bin/python main.py
     ```
 
     Kein `.env` mit gültigen Tokens dabei? Dann läuft hier interaktiv der
-    OAuth-Flow von `api_setup()` (Browser-Login, Code ins SSH-Terminal
-    einfügen) – funktioniert genauso wie beim lokalen Testlauf.
-    Fehlt der Zugriff auf `/dev/spidev0.0` oder `/dev/gpiomem`, ersatzweise
-    mit `--privileged` statt der beiden `--device`-Flags starten.
+    OAuth-Flow von `api_setup()` (Browser-Login, Code ins SSH-Terminal einfügen).
 
 ### Automatisches Update alle 30 Minuten
 
 Die Unit-Dateien in [`deploy/`](deploy/) richten einen systemd-Timer ein, der
-den Container alle 30 Minuten via `docker run --rm` startet (auch ohne aktive
-Login-Session, mit Logs über `journalctl`):
+`main.py` alle 30 Minuten ausführt (auch ohne aktive Login-Session, mit Logs
+über `journalctl`):
 
-1. Pfade und Benutzer in `deploy/strava-dashboard.service` an die eigene
-   Installation anpassen (Default geht von `pi`/`/home/pi/strava-api-display` aus).
+1. `deploy/strava-dashboard.service` geht von `jschoenau`/`/home/jschoenau/strava-api-display`
+   und der Waveshare-Bibliothek unter `~/e-Paper` aus (inkl. der
+   `Environment=PYTHONPATH=...`-Zeile) – bei abweichenden Pfaden entsprechend anpassen.
 2. Beide Dateien nach `/etc/systemd/system/` kopieren:
 
     ```sh
@@ -212,16 +209,11 @@ Login-Session, mit Logs über `journalctl`):
     journalctl -u strava-dashboard.service -f       # Logs live verfolgen
     ```
 
-**Nach Code-Änderungen:** Repo auf dem Pi aktualisieren (`rsync` erneut) und
-`docker build -t strava-dashboard .` neu ausführen – der Timer nutzt beim
-nächsten Lauf automatisch das neu getaggte `:latest`-Image, ohne dass die
-systemd-Units angefasst werden müssen.
-
 Alternativ genügt auch ein Cron-Eintrag (`crontab -e`), falls kein systemd
 gewünscht ist:
 
 ```cron
-*/30 * * * * docker run --rm --device /dev/spidev0.0 --device /dev/gpiomem -v /home/pi/strava-api-display/.env:/app/.env -v /home/pi/strava-api-display/output:/app/output strava-dashboard >> /home/pi/strava-api-display/cron.log 2>&1
+*/30 * * * * cd /home/jschoenau/strava-api-display && PYTHONPATH=/home/jschoenau/e-Paper/RaspberryPi_JetsonNano/python/lib .venv/bin/python main.py >> /home/jschoenau/strava-api-display/cron.log 2>&1
 ```
 
 ## Lokal testen (ohne Display)
