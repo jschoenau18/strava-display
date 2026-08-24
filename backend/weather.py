@@ -28,11 +28,6 @@ def _fetch_weather(latitude: float, longitude: float) -> dict:
         return json.load(response)
 
 
-def _wind_direction(degrees: float) -> str:
-    directions = ("N", "NO", "O", "SO", "S", "SW", "W", "NW")
-    return directions[round(degrees / 45) % len(directions)]
-
-
 def _pi_location(route: list[tuple]) -> tuple[float, float] | None:
     configured_latitude = os.getenv("WEATHER_LATITUDE")
     configured_longitude = os.getenv("WEATHER_LONGITUDE")
@@ -81,7 +76,7 @@ def get_weather(route: list[tuple]) -> dict:
         return {
             "temperature": round(float(current["temperature_2m"])),
             "wind_speed": round(float(current["wind_speed_10m"])),
-            "wind_direction": _wind_direction(float(current["wind_direction_10m"])),
+            "wind_direction_deg": float(current["wind_direction_10m"]),
             "precipitation_state": precipitation_state,
         }
     except (KeyError, TypeError, ValueError, OSError):

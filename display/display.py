@@ -208,6 +208,15 @@ def draw_light_divider(display : Display, center_x : float, y : int, width : int
     divider = GUIBox((width, thickness), (int(center_x - width / 2), y), WHITE)
     divider.draw_dithered(display.draw, BLACK, WHITE, dither_count = 2)
 
+def draw_vertical_divider(display : Display, x : int, center_y : float, height : int, thickness : int = 2, color : int = BLACK) -> None:
+
+    """
+    Draws a solid vertical divider line of the given height, centered on
+    center_y.
+    """
+
+    display.draw.line((x, center_y - height / 2, x, center_y + height / 2), fill = color, width = thickness)
+
 def draw_icon_value(display : Display,
                      icon : Image.Image,
                      anchor : tuple[float, float],
@@ -271,22 +280,66 @@ def draw_weather_icon(display : Display, anchor : tuple[int, int], state : str, 
         elif state == "showers":
             draw.line((x + 11, y + 21, x + 9, y + size), fill = BLUE, width = 2)
 
-def _route_projection(route_points : list[tuple],
-                       box_size : tuple[int, int],
-                       padding : int = 6):
+def draw_wind_arrow(display : Display, anchor : tuple[int, int], degrees : float, size : int = 18, color : int = BLACK) -> None:
 
     """
-    Derives a lat/lon -> pixel projection purely from route_points, so the
-    route always fills box_size as much as its own aspect ratio allows
-    (e.g. a north-south route fills the full available height). Returns a
-    function that projects any (lat, lon, ...) points with that same
-    transform - e.g. contour/river lines, which may run wider than the
-    route itself and are then simply clipped at the box edges instead of
-    shrinking the route to fit them in.
+    Draws a bold arrow (thick shaft + filled triangular head) centered in
+    a size x size box, pointing in the direction the wind is blowing
+    towards (degrees is the meteorological "coming from" bearing
+    Open-Meteo reports, 0=North/up, clockwise - so the arrow points the
+    opposite way, degrees + 180).
     """
 
-    lats = [p[0] for p in route_points]
-    lons = [p[1] for p in route_points]
+    draw = display.draw
+    cx = anchor[0] + size / 2
+    cy = anchor[1] + size / 2
+    angle = math.radians((degrees + 180) % 360)
+
+    def _offset(base : tuple[float, float], bearing_rad : float, length : float) -> tuple[float, float]:
+        return (base[0] + length * math.sin(bearing_rad), base[1] - length * math.cos(bearing_rad))
+
+    half_len = size * 0.46
+    head_len = size * 0.4
+    head_half_width = size * 0.24
+
+    tip = _offset((cx, cy), angle, half_len)
+    tail = _offset((cx, cy), angle, -half_len)
+    head_base = _offset((cx, cy), angle, half_len - head_len)
+    side1 = _offset(head_base, angle + math.pi / 2, head_half_width)
+    side2 = _offset(head_base, angle - math.pi / 2, head_half_width)
+
+    draw.line([tail, head_base], fill = color, width = 3)
+    draw.polygon([tip, side1, side2], fill = color)
+
+def _haversine_km(p1 : tuple, p2 : tuple) -> float:
+
+    """
+    Great-circle distance in km between two (lat, lon, ...) points.
+    """
+
+    EARTH_RADIUS_KM = 6371
+    lat1, lon1 = math.radians(p1[0]), math.radians(p1[1])
+    lat2, lon2 = math.radians(p2[0]), math.radians(p2[1])
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = math.sin(dlat / 2) ** 2 + math.cos(lat1) * math.cos(lat2) * math.sin(dlon / 2) ** 2
+
+    return 2 * EARTH_RADIUS_KM * math.asin(math.sqrt(a))
+
+STRAVA_ORANGE = (252, 76, 2, 255)
+
+def _project_route_points(points : list[tuple],
+                           box_size : tuple[int, int],
+                           padding : int = 10) -> list[tuple[float, float]]:
+
+    """
+    Projects (lat, lon, ...) GPS points onto pixel coordinates that fit
+    inside box_size while preserving the route's real-world aspect
+    ratio. Any extra tuple elements (e.g. elevation) are ignored.
+    """
+
+    lats = [p[0] for p in points]
+    lons = [p[1] for p in points]
     min_lat, max_lat = min(lats), max(lats)
     min_lon, max_lon = min(lons), max(lons)
 
@@ -304,84 +357,34 @@ def _route_projection(route_points : list[tuple],
     offset_x = padding + (avail_w - drawn_w) / 2
     offset_y = padding + (avail_h - drawn_h) / 2
 
-    def project(points : list[tuple]) -> list[tuple[float, float]]:
-        return [
-            (
-                offset_x + (p[1] - min_lon) * math.cos(lat_mid_rad) * scale,
-                offset_y + (max_lat - p[0]) * scale,  # BILD-Y WÄCHST NACH UNTEN, BREITENGRAD NACH OBEN
-            )
-            for p in points
-        ]
+    return [
+        (
+            offset_x + (p[1] - min_lon) * math.cos(lat_mid_rad) * scale,
+            offset_y + (max_lat - p[0]) * scale,  # BILD-Y WÄCHST NACH UNTEN, BREITENGRAD NACH OBEN
+        )
+        for p in points
+    ]
 
-    return project
-
-STRAVA_ORANGE = (252, 76, 2, 255)
-
-ELEVATION_HEATMAP_STOPS = [
-    (0.00, (252, 76, 2)),     # NIEDRIG: STRAVA-ORANGE
-    (0.45, (240, 150, 20)),   # MITTEL: ORANGE
-    (1.00, (255, 245, 150)),  # HOCH: HELLGELB
-]
-
-def _elevation_color(t : float) -> tuple[int, int, int, int]:
+def draw_route_map(display : Display,
+                    pal_img : Image.Image,
+                    anchor : tuple[int, int],
+                    size : tuple[int, int],
+                    points : list[tuple],
+                    padding : int = 10,
+                    line_width : int = 4) -> None:
 
     """
-    Maps a normalized elevation (0 = route minimum, 1 = route maximum)
-    to an RGBA heatmap color, interpolated across ELEVATION_HEATMAP_STOPS.
-    """
-
-    t = max(0.0, min(1.0, t))
-
-    for (t0, c0), (t1, c1) in zip(ELEVATION_HEATMAP_STOPS, ELEVATION_HEATMAP_STOPS[1:]):
-        if t <= t1:
-            local_t = (t - t0) / (t1 - t0) if t1 > t0 else 0
-            r = round(c0[0] + (c1[0] - c0[0]) * local_t)
-            g = round(c0[1] + (c1[1] - c0[1]) * local_t)
-            b = round(c0[2] + (c1[2] - c0[2]) * local_t)
-            return (r, g, b, 255)
-
-    return (*ELEVATION_HEATMAP_STOPS[-1][1], 255)
-
-def draw_route_card(display : Display,
-                     pal_img : Image.Image,
-                     anchor : tuple[int, int],
-                     size : tuple[int, int],
-                     points : list[tuple],
-                     map_features : dict | None = None,
-                     padding : int = 14,
-                     line_width : int = 4) -> None:
-
-    """
-    Draws a schematic line drawing of a GPS route (list of (lat, lon)
-    or (lat, lon, elevation_m) tuples) on a transparent background.
-    With elevation data, the line is colored as an elevation heatmap
-    (blue = lowest point, red = highest); otherwise it falls back to a
-    plain Strava-orange line. True RGBA colors are dithered onto the
-    display's fixed e-ink palette (see to_spectra6), since none of
-    them exist in SPECTRA6_COLORS.
+    Draws a schematic birds-eye line drawing of a GPS route (list of
+    (lat, lon, ...) tuples) on a transparent background - no map/terrain
+    underlay, plain Strava-orange line.
     """
 
     overlay = Image.new("RGBA", size, (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
 
     if len(points) >= 2:
-        project = _route_projection(points, size, padding)
-        pixel_points = project(points)
-        for line in (map_features or {}).get("contours", []):
-            overlay_draw.line(project(line), fill = (150, 150, 150, 180), width = 1)
-        for line in (map_features or {}).get("rivers", []):
-            overlay_draw.line(project(line), fill = (30, 90, 220, 220), width = 2)
-
-        elevations = [p[2] if len(p) > 2 else None for p in points]
-
-        if all(e is not None for e in elevations) and min(elevations) < max(elevations):  # type: ignore[type-var]
-            min_ele, max_ele = min(elevations), max(elevations)  # type: ignore[type-var]
-            ele_range = max_ele - min_ele
-            for i in range(len(pixel_points) - 1):
-                t = (elevations[i] - min_ele) / ele_range
-                overlay_draw.line([pixel_points[i], pixel_points[i + 1]], fill = _elevation_color(t), width = line_width, joint = "curve")
-        else:
-            overlay_draw.line(pixel_points, fill = STRAVA_ORANGE, width = line_width, joint = "curve")
+        pixel_points = _project_route_points(points, size, padding)
+        overlay_draw.line(pixel_points, fill = STRAVA_ORANGE, width = line_width, joint = "curve")
     else:
         font = ImageFont.truetype(FONT_REGULAR_CONDENSED, size = 13)
         overlay_draw.text((size[0] / 2, size[1] / 2), "Keine GPS-Daten", fill = (0, 0, 0, 255), font = font, anchor = "mm")
@@ -389,31 +392,128 @@ def draw_route_card(display : Display,
     quantized = to_spectra6(overlay, pal_img)
     paste_with_transparency(display.image, quantized, anchor)
 
-def draw_elevation_legend(display : Display,
-                          pal_img : Image.Image,
-                          anchor : tuple[int, int],
-                          size : tuple[int, int]) -> None:
+CLIMB_MIN_LENGTH_M = 750.0
+
+def _classify_climbs(distances_km : list[float],
+                      elevations : list[float],
+                      min_length_m : float = CLIMB_MIN_LENGTH_M,
+                      smoothing_window : int = 5,
+                      pullback_tolerance_m : float = 5.0) -> list[bool]:
+
+    """
+    Marks each point as belonging to a sustained climb (True) or not
+    (False). Elevation is first smoothed with a small moving average to
+    ignore GPS noise. A climb run tracks its running peak and only ends
+    once elevation has pulled back more than pullback_tolerance_m below
+    that peak (so small dips within a climb don't end it, but an actual
+    descent does - unlike a naive step-to-step tolerance, which never
+    breaks on a long, gradual descent where every single step is small).
+    A finished run only counts as a climb if it covers at least
+    min_length_m of route distance and nets an elevation gain.
+    """
+
+    n = len(elevations)
+    if n < 2:
+        return [False] * n
+
+    half = smoothing_window // 2
+    smoothed = [
+        sum(elevations[max(0, i - half):min(n, i + half + 1)]) / len(elevations[max(0, i - half):min(n, i + half + 1)])
+        for i in range(n)
+    ]
+
+    is_climb = [False] * n
+    run_start = 0
+    run_peak_i = 0
+
+    def close_run(end_i : int) -> None:
+        run_distance_m = (distances_km[end_i] - distances_km[run_start]) * 1000
+        if run_distance_m >= min_length_m and smoothed[end_i] > smoothed[run_start]:
+            for j in range(run_start, end_i + 1):
+                is_climb[j] = True
+
+    for i in range(1, n):
+        if smoothed[i] > smoothed[run_peak_i]:
+            run_peak_i = i
+        elif smoothed[run_peak_i] - smoothed[i] > pullback_tolerance_m:
+            close_run(run_peak_i)
+            run_start = i
+            run_peak_i = i
+
+    close_run(run_peak_i)
+    return is_climb
+
+def draw_elevation_profile(display : Display,
+                            pal_img : Image.Image,
+                            anchor : tuple[int, int],
+                            size : tuple[int, int],
+                            points : list[tuple]) -> None:
+
+    """
+    Draws a distance/elevation profile of a route (list of (lat, lon,
+    elevation_m) tuples) as a line chart: x = cumulative distance, y =
+    elevation. Only segments that are part of a sustained climb (see
+    _classify_climbs, CLIMB_MIN_LENGTH_M) get a solid Strava-orange fill;
+    flat/rolling/descending stretches stay unfilled so minor bumps don't
+    turn the whole profile into visual noise. Falls back to a placeholder
+    text if fewer than 2 points carry elevation.
+    """
 
     overlay = Image.new("RGBA", size, (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
-    label_font = _select_font(13, False, True)
-    line_x = 22
-    line_top = 50
-    line_bottom = size[1] - 50
-    segments = 16
-    segment_height = (line_bottom - line_top) / segments
 
-    for i in range(segments):
-        t = i / (segments - 1)
-        y0 = line_bottom - i * segment_height
-        y1 = line_bottom - (i + 1) * segment_height
-        overlay_draw.line((line_x, y0, line_x, y1), fill = _elevation_color(t), width = 5)
+    valid_points = [p for p in points if len(p) > 2 and p[2] is not None]
 
-    label = Image.new("RGBA", (30, 14), (0, 0, 0, 0))
-    label_draw = ImageDraw.Draw(label)
-    label_draw.text((15, 7), "Höhe", fill = (0, 0, 0, 255), font = label_font, anchor = "mm")
-    label = label.rotate(90, expand = True)
-    overlay.alpha_composite(label, (0, int((size[1] - label.height) / 2)))
+    if len(valid_points) < 2:
+        font = ImageFont.truetype(FONT_REGULAR_CONDENSED, size = 13)
+        overlay_draw.text((size[0] / 2, size[1] / 2), "Keine Höhendaten", fill = (0, 0, 0, 255), font = font, anchor = "mm")
+        quantized = to_spectra6(overlay, pal_img)
+        paste_with_transparency(display.image, quantized, anchor)
+        return
+
+    distances_km = [0.0]
+    for i in range(1, len(valid_points)):
+        distances_km.append(distances_km[-1] + _haversine_km(valid_points[i - 1], valid_points[i]))
+    total_distance_km = distances_km[-1] or 1e-9
+
+    elevations = [p[2] for p in valid_points]
+    min_ele, max_ele = min(elevations), max(elevations)
+    ele_range = (max_ele - min_ele) or 1.0
+
+    label_font = _select_font(11, False, True)
+    max_ele_text = f"{max_ele:.0f} m"
+    min_ele_text = f"{min_ele:.0f} m"
+    ele_label_w = max(label_font.getlength(max_ele_text), label_font.getlength(min_ele_text))
+    chart_left = int(ele_label_w) + 10
+    chart_right = size[0] - 8
+    chart_top = 16
+    chart_bottom = size[1] - 6
+    chart_w = chart_right - chart_left
+    chart_h = chart_bottom - chart_top
+
+    pixel_points = [
+        (
+            chart_left + (distances_km[i] / total_distance_km) * chart_w,
+            chart_bottom - ((elevations[i] - min_ele) / ele_range) * chart_h,
+        )
+        for i in range(len(valid_points))
+    ]
+
+    # NUR ANSTIEGE AB CLIMB_MIN_LENGTH_M BEKOMMEN EINE FLÄCHE, DER REST BLEIBT UNGEFÜLLT
+    is_climb = _classify_climbs(distances_km, elevations)
+    for i in range(len(pixel_points) - 1):
+        if not (is_climb[i] and is_climb[i + 1]):
+            continue
+        x0, y0 = pixel_points[i]
+        x1, y1 = pixel_points[i + 1]
+        overlay_draw.polygon([(x0, chart_bottom), (x0, y0), (x1, y1), (x1, chart_bottom)], fill = STRAVA_ORANGE)
+
+    overlay_draw.line(pixel_points, fill = (0, 0, 0, 255), width = 2, joint = "curve")
+    overlay_draw.line((chart_left, chart_bottom, chart_right, chart_bottom), fill = (0, 0, 0, 255), width = 1)
+
+    overlay_draw.text((chart_left - 4, chart_top), max_ele_text, fill = (0, 0, 0, 255), font = label_font, anchor = "rt")
+    overlay_draw.text((chart_left - 4, chart_bottom), min_ele_text, fill = (0, 0, 0, 255), font = label_font, anchor = "rs")
+
     quantized = to_spectra6(overlay, pal_img)
     paste_with_transparency(display.image, quantized, anchor)
 
@@ -569,13 +669,46 @@ def make_gui(data : dict) -> Image.Image:
 
     weather = data.get("weather") or {}
     if weather:
-        weather_text = f"{weather.get('temperature', '-')}°C  {weather.get('wind_direction', '-')} {weather.get('wind_speed', '-')}"
-        weather_font = _select_font(15, True, True)
-        weather_icon_size = 34
-        weather_icon_x = display.size[0] - MARGIN - weather_icon_size
-        weather_text_x = weather_icon_x - 8
-        display.draw.text((weather_text_x, HEADER_H / 2), weather_text, fill = BLACK, font = weather_font, anchor = "rm")
-        draw_weather_icon(display, (weather_icon_x, int((HEADER_H - weather_icon_size) / 2)), weather.get("precipitation_state", "clear"), size = weather_icon_size)
+        # DREI BEREICHE VON RECHTS: PROGNOSE-ICON | WIND (PFEIL + KM/H) | TEMPERATUR.
+        # LAYOUT WIRD ANHAND DER TATSÄCHLICHEN INHALTSBREITEN VON RECHTS NACH LINKS
+        # AUFGEBAUT, DAMIT JEDE TRENNLINIE LINKS/RECHTS GENAU DASSELBE PADDING HAT
+        # (STATT FESTER SPALTENBREITEN, DIE JE NACH INHALT UNTERSCHIEDLICH VIEL
+        # LEERRAUM UM DIE LINIE LASSEN).
+        DIVIDER_PADDING = 10
+        weather_icon_size = 30
+        wind_arrow_size = 18
+
+        temp_font = _select_font(18, True, True)
+        wind_font = _select_font(14, True, True)
+
+        icon_x1 = display.size[0] - MARGIN
+        icon_x0 = icon_x1 - weather_icon_size
+        draw_weather_icon(display, (int(icon_x0), int((HEADER_H - weather_icon_size) / 2)), weather.get("precipitation_state", "clear"), size = weather_icon_size)
+
+        wind_text = f"{weather.get('wind_speed', '-')} km/h"
+        wind_text_w = wind_font.getlength(wind_text)
+        wind_gap = 5
+        wind_direction_deg = weather.get("wind_direction_deg")
+        wind_content_w = (wind_arrow_size + wind_gap if wind_direction_deg is not None else 0) + wind_text_w
+
+        divider2_x = icon_x0 - DIVIDER_PADDING
+        wind_x1 = divider2_x - DIVIDER_PADDING
+        wind_x0 = wind_x1 - wind_content_w
+        if wind_direction_deg is not None:
+            draw_wind_arrow(display, (wind_x0, HEADER_H / 2 - wind_arrow_size / 2), wind_direction_deg, size = wind_arrow_size)
+            display.draw.text((wind_x0 + wind_arrow_size + wind_gap, HEADER_H / 2), wind_text, fill = BLACK, font = wind_font, anchor = "lm")
+        else:
+            display.draw.text((wind_x0, HEADER_H / 2), wind_text, fill = BLACK, font = wind_font, anchor = "lm")
+
+        divider1_x = wind_x0 - DIVIDER_PADDING
+        temp_x1 = divider1_x - DIVIDER_PADDING
+        display.draw.text((temp_x1, HEADER_H / 2), f"{weather.get('temperature', '-')}°C", fill = BLACK, font = temp_font, anchor = "rm")
+
+        # TRENNLINIEN SO HOCH WIE DIE (GRÖSSTE) SCHRIFT DER SPALTEN
+        ascent, descent = temp_font.getmetrics()
+        divider_h = ascent + descent
+        draw_vertical_divider(display, int(divider1_x), HEADER_H / 2, divider_h)
+        draw_vertical_divider(display, int(divider2_x), HEADER_H / 2, divider_h)
 
     divider = GUIBox((display.size[0], 3), (0, HEADER_H - 3), WHITE)
     divider.draw_dithered(display.draw, BLACK, WHITE, dither_count = 2)
@@ -609,7 +742,7 @@ def make_gui(data : dict) -> Image.Image:
     rows_h = content_h - LABEL_H - GAP // 2
 
     # INFO-BOX MIT DEN KENNZAHLEN DER LETZTEN AKTIVITÄT (GESCHWINDIGKEIT, HÖHENMETER, DISTANZ)
-    INFO_BOX_H = 48
+    INFO_BOX_H = 40
     info_box = GUIBox((left_w, INFO_BOX_H), (MARGIN, rows_y), WHITE)
     info_box.draw_box(display.draw)
 
@@ -637,17 +770,11 @@ def make_gui(data : dict) -> Image.Image:
         icon_anchor = (col_x, rows_y + (INFO_BOX_H - icon_h) / 2)
         draw_icon_value(display, icon, icon_anchor, icon_h, value_text, BLACK, fontsize = 18, center_in_width = col_w)
 
-    route_gap = 6
-    route_y = rows_y + INFO_BOX_H + route_gap
-    legend_w = 30
-    power_box_h = 48
-    route_h = rows_h - INFO_BOX_H - route_gap - route_gap - power_box_h
-    route_points = data.get("last_activity_route") or []
-    route_x = MARGIN + legend_w + route_gap
-    draw_route_card(display, pal_img, (route_x, route_y), (left_w - legend_w - route_gap, route_h), route_points, map_features = data.get("map_features"), padding = 6)
-    draw_elevation_legend(display, pal_img, (MARGIN, route_y), (legend_w, route_h))
-
-    power_box_y = route_y + route_h + route_gap
+    # POWER-CHIPS DIREKT UNTER DEN ANDEREN DREI KENNZAHLEN
+    row_gap = 6
+    chip_gap = 0
+    power_box_h = 40
+    power_box_y = rows_y + INFO_BOX_H + chip_gap
     power_metrics = data.get("power_metrics") or {}
     power_chips = [
         ("Average_P.jpg", power_metrics.get("average_power")),
@@ -661,6 +788,20 @@ def make_gui(data : dict) -> Image.Image:
         icon_anchor = (col_x, power_box_y + (power_box_h - icon_h) / 2)
         value_text = str(int(value)) if value is not None else "-"
         draw_icon_value(display, icon, icon_anchor, icon_h, value_text, BLACK, fontsize = 18, center_in_width = power_col_w)
+
+    # ROUTEN-KARTE MIT HÖHENPROFIL DARUNTER - HÖHENPROFIL BLEIBT FIX, DIE
+    # ROUTEN-KARTE BEKOMMT DEN GESAMTEN DURCH DIE ENGEREN CHIPS GEWONNENEN PLATZ
+    maps_y = power_box_y + power_box_h + row_gap
+    maps_h = rows_h - INFO_BOX_H - power_box_h - chip_gap - 2 * row_gap
+    ELEVATION_PROFILE_H = 69
+    elevation_h = ELEVATION_PROFILE_H
+    route_map_h = maps_h - elevation_h - row_gap
+
+    route_points = data.get("last_activity_route") or []
+    draw_route_map(display, pal_img, (MARGIN, maps_y), (left_w, route_map_h), route_points)
+
+    elevation_y = maps_y + route_map_h + row_gap
+    draw_elevation_profile(display, pal_img, (MARGIN, elevation_y), (left_w, elevation_h), route_points)
 
     # RIGHT COLUMN: YEAR-TO-DATE STATS
     ytd = data.get("ytd") or {}

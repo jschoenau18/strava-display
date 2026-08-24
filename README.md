@@ -17,7 +17,6 @@ es nur als PNG, falls kein Display angeschlossen ist).
 - [Modulreferenz](#modulreferenz)
   - [`main.py`](#mainpy)
   - [`backend/api_reader.py`](#backendapi_readerpy)
-    - [`backend/geodata.py`](#backendgeodatapy)
     - [`backend/weather.py`](#backendweatherpy)
   - [`display/display.py`](#displaydisplaypy)
   - [`display/eink.py`](#displayeinkpy)
@@ -34,7 +33,6 @@ graph LR
 
     subgraph Backend
         API["backend/api_reader.py"]
-        GEO["backend/geodata.py"]
         WEATHER["backend/weather.py"]
     end
 
@@ -50,9 +48,7 @@ graph LR
     MAIN["main.py"] -->|liest/schreibt Tokens| ENV
     MAIN -->|api_setup / refresh_api_access\nget_dashboard_data| API
     API <-->|OAuth, Aktivitäten, Streams| STRAVA
-    API --> GEO
     API --> WEATHER
-    GEO <-->|Höhenlinien, Flüsse| MAP["OpenTopoData / OpenStreetMap"]
     WEATHER <-->|Wetter, Standort| WX["Open-Meteo / IP-Geolokalisierung"]
     MAIN -->|dashboard_data dict| DISP
     DISP -->|PNG| OUT[("output/dashboard.png")]
@@ -67,7 +63,6 @@ graph LR
 | ------------------------ | ------------- |
 | `main.py` | Orchestriert den Ablauf: Auth-Status prüfen, Daten holen, Bild rendern, optional aufs Display schreiben. |
 | `backend/api_reader.py` | Strava-API-Zugriff (`stravalib`) sowie Aufbereitung von Aktivitäten, Routen, Power und Kudos. |
-| `backend/geodata.py` | Lädt und cached Höhenraster von OpenTopoData sowie Flussgeometrien von OpenStreetMap/Overpass. |
 | `backend/weather.py` | Ermittelt den Pi-Standort und lädt Temperatur, Wind und Niederschlagsprognose von Open-Meteo. |
 | `display/display.py` | Baut aus dem Daten-`dict` ein PIL-Bild für die feste 6-Farben-E-Ink-Palette. Kein Netzwerkzugriff. |
 | `display/eink.py` | Dünner Treiber-Wrapper, der ein fertiges Bild über die Waveshare-Bibliothek ans Panel schickt. Einziger Ort mit Hardwarezugriff. |
@@ -136,7 +131,6 @@ strava-api-display/
 ├── main.py                  # Einstiegspunkt / Orchestrierung
 ├── backend/
 │   ├── api_reader.py        # Strava-Auth + Datenabruf
-│   ├── geodata.py            # Höhenlinien + Flüsse, mit Cache
 │   └── weather.py            # Pi-Standort + Wetterdaten
 ├── display/
 │   ├── display.py           # Bild-Rendering (PIL) für die 6-Farb-Palette
@@ -399,25 +393,19 @@ Dict, das `display.render_dashboard()` erwartet:
 ```python
 {
     "athlete_name": str,
-    "ytd": {...},                    # siehe get_ytd_stats()
-    "last_activity": dict | None,    # siehe get_recent_activities()
+    "ytd": {...},                          # siehe get_ytd_stats()
+    "last_activity": dict | None,          # siehe get_recent_activities()
     "recent_activities": list[dict],
+    "weekly_cycling_distance": list[dict], # siehe get_weekly_cycling_distance()
     "last_activity_route": list[tuple[float, float, float | None]],
-    "best_power_efforts": dict,      # siehe get_best_power_efforts()
+    "best_power_efforts": dict,            # siehe get_best_power_efforts()
+    "power_metrics": dict,                 # siehe get_power_metrics()
+    "weather": dict,                       # siehe backend.weather.get_weather()
 }
 ```
 
 *(Interne Hilfsfunktionen `_duration_seconds`, `_activity_to_dict`,
 `_best_avg_power` sind nicht Teil der öffentlichen API.)*
-
----
-
-### `backend/geodata.py`
-
-Lädt für den Bereich der letzten Route ein kleines Höhenraster von OpenTopoData
-und Flussgeometrien von OpenStreetMap/Overpass. Die Antworten werden unter
-`output/geodata-cache/` gespeichert. Bei nicht erreichbaren Diensten liefert
-das Modul leere Layer, damit das Dashboard trotzdem gerendert werden kann.
 
 ### `backend/weather.py`
 
@@ -485,6 +473,18 @@ Fügt ein bereits quantisiertes Bild transparenzkorrekt in `base_image` ein
 Zeichnet einen hellgrauen, geditherten Trennbalken (Schwarz/Weiß-Schachbrett),
 zentriert auf `center_x`.
 
+#### `draw_vertical_divider(display, x, center_y, height, thickness=3) -> None`
+
+Wie `draw_light_divider`, nur vertikal, zentriert auf `center_y` – trennt im
+Header die Temperatur-/Wind-/Prognose-Spalten.
+
+#### `draw_wind_arrow(display, anchor, degrees, size=16, color=BLACK) -> None`
+
+Zeichnet einen kleinen Pfeil (Schaft + Spitze) in einer `size × size`-Box,
+der in die Richtung zeigt, in die der Wind weht (`degrees` ist die von
+Open-Meteo gelieferte "kommt aus"-Windrichtung, 0° = Nord, im Uhrzeigersinn;
+der Pfeil zeigt entsprechend um 180° gedreht).
+
 #### `draw_icon_value(display, icon, anchor, icon_h, text, text_color, fontsize, gap=6, center_in_width=None) -> None`
 
 Fügt ein Icon (auf `icon_h` skaliert) ein und schreibt vertikal zentriert
@@ -492,15 +492,25 @@ Text daneben. Mit `center_in_width` wird die Icon+Text-Gruppe in dieser
 Breite zentriert statt links ausgerichtet – genutzt für die
 Geschwindigkeit/Höhenmeter/Distanz-Chips.
 
-#### `draw_route_card(display, pal_img, anchor, size, points, padding=14, line_width=4) -> None`
+#### `draw_route_map(display, pal_img, anchor, size, points, padding=10, line_width=4) -> None`
 
-Zeichnet die Routen-Silhouette der letzten Aktivität:
+Zeichnet die Routen-Silhouette der letzten Aktivität als schematische
+Vogelperspektive, ohne Kartenhintergrund:
 
 - `points` = Liste von `(lat, lon)` oder `(lat, lon, elevation_m)` (siehe `get_last_activity_route()`).
-- Liegen für **alle** Punkte Höhendaten vor und gibt es einen Höhenunterschied, wird die Linie segmentweise als **Höhen-Heatmap** gefärbt (Strava-Orange → Hellgelb, siehe `_elevation_color`).
-- Sonst Fallback: einfarbige Strava-Orange-Linie.
+- Einfarbige Strava-Orange-Linie, kein Colormap.
 - Bei weniger als 2 Punkten: Platzhaltertext "Keine GPS-Daten".
 - Projektion via `_project_route_points()` (längengradkorrigiert, seitenverhältnistreu, zentriert in `size`).
+
+#### `draw_elevation_profile(display, pal_img, anchor, size, points) -> None`
+
+Zeichnet das Distanz-Höhen-Profil der letzten Aktivität, unterhalb der Routen-Karte:
+
+- `points` = Liste von `(lat, lon, elevation_m)` (siehe `get_last_activity_route()`); Punkte ohne Höhenwert werden ignoriert.
+- x-Achse = kumulierte Distanz (Haversine zwischen aufeinanderfolgenden Punkten, keine Achsenbeschriftung), y-Achse = Höhe (min/max-Werte links beschriftet).
+- Nur Abschnitte, die Teil eines zusammenhängenden Anstiegs von mindestens `CLIMB_MIN_LENGTH_M` (750 m Streckenlänge) sind, bekommen eine einfarbige Strava-Orange-Fläche; der Rest bleibt ungefüllt. Ein Anstieg wird über `_classify_climbs()` erkannt: die Höhe wird geglättet (gleitende Mittelung gegen GPS-Rauschen) und ein Anstiegs-Abschnitt läuft weiter, bis er mehr als `pullback_tolerance_m` unter seinen bisherigen Höhenpunkt zurückfällt – dadurch werden echte, auch leicht wellige Anstiege nicht an jedem kleinen Rücksetzer fragmentiert, aber echte Abfahrten sauber erkannt.
+- Schwarze Kontur-Linie über der gesamten Kurve.
+- Bei weniger als 2 Punkten mit Höhenwert: Platzhaltertext "Keine Höhendaten".
 
 #### `render_stat_block(display, pal_img, anchor, size, entries: list[dict]) -> None`
 
@@ -528,9 +538,10 @@ Tageszeitabhängige Begrüßung ("Guten Morgen" / "Guten Tag" / "Guten Abend" /
 #### `make_gui(data: dict) -> Image`
 
 Baut das komplette Dashboard-Layout (Header mit Logo/Gruß/Datum,
-Aktivitäts-Titel, Stat-Chips, Routen-Heatmap links; Jahres-Distanz,
-Höhenmeter, Bestleistungen rechts) aus dem `data`-Dict
-(Format siehe [`get_dashboard_data()`](#get_dashboard_dataclient-stravalibclient-n_recent-int--1---dict)).
+Aktivitäts-Titel, Stat-Chips, Leistungs-Chips, Routen-Karte und
+Höhenprofil links; Jahres-Distanz, Höhenmeter, Bestleistungen rechts)
+aus dem `data`-Dict (Format siehe
+[`get_dashboard_data()`](#get_dashboard_dataclient-stravalibclient-n_recent-int--1---dict)).
 
 #### `render_dashboard(data: dict, output_path: str | None = None) -> Image`
 
@@ -539,7 +550,7 @@ und speichert das Ergebnis optional als PNG (`RGB`-konvertiert) unter
 `output_path`.
 
 *(Interne Hilfsfunktionen `_select_font`, `_project_route_points`,
-`_elevation_color` sind nicht Teil der öffentlichen API.)*
+`_haversine_km`, `_classify_climbs` sind nicht Teil der öffentlichen API.)*
 
 ---
 
