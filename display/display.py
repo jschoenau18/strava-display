@@ -432,6 +432,7 @@ def draw_weekly_distance_chart(display : Display,
         bar_h = chart_height * distance / max_distance
         bar_top = chart_bottom - bar_h
         overlay_draw.rectangle((bar_x, bar_top, bar_x + bar_width, chart_bottom), fill = STRAVA_ORANGE)
+        overlay_draw.text((bar_x + bar_width / 2, bar_top - 4), f"{distance:.1f}", fill = (0, 0, 0, 255), font = date_font, anchor = "ms")
         overlay_draw.text((bar_x + bar_width / 2, size[1] - 7), week.get("label", ""), fill = (0, 0, 0, 255), font = date_font, anchor = "ms")
 
     quantized = to_spectra6(overlay, pal_img)
