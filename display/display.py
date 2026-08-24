@@ -556,7 +556,7 @@ def make_gui(data : dict) -> Image.Image:
         ("distance_icon.jpeg", f"{last_act.get('distance_km', 0):.1f} km"),
     ]
 
-    icon_h = 30
+    icon_h = 34
     col_w = left_w / len(stat_chips)
 
     for i, (icon_filename, value_text) in enumerate(stat_chips):
