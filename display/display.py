@@ -563,10 +563,26 @@ def make_gui(data : dict) -> Image.Image:
     route_y = rows_y + INFO_BOX_H + GAP
     legend_h = 26
     legend_gap = 4
-    route_h = rows_h - INFO_BOX_H - GAP - legend_h - legend_gap
+    power_box_h = 48
+    route_h = rows_h - INFO_BOX_H - GAP - legend_h - legend_gap - GAP - power_box_h
     route_points = data.get("last_activity_route") or []
     draw_route_card(display, pal_img, (MARGIN, route_y), (left_w, route_h), route_points, padding = 14)
     draw_elevation_legend(display, pal_img, (MARGIN, route_y + route_h + legend_gap), (left_w, legend_h))
+
+    power_box_y = route_y + route_h + legend_gap + legend_h + GAP
+    power_metrics = data.get("power_metrics") or {}
+    power_chips = [
+        ("Average_P.jpg", power_metrics.get("average_power")),
+        ("NP.jpg", power_metrics.get("normalized_power")),
+        ("Power_3S.jpg", power_metrics.get("top_power_3s")),
+    ]
+    power_col_w = left_w / len(power_chips)
+    for i, (icon_filename, value) in enumerate(power_chips):
+        icon = load_icon(pal_img, icon_filename)
+        col_x = MARGIN + i * power_col_w
+        icon_anchor = (col_x, power_box_y + (power_box_h - icon_h) / 2)
+        value_text = str(int(value)) if value is not None else "-"
+        draw_icon_value(display, icon, icon_anchor, icon_h, value_text, BLACK, fontsize = 18, center_in_width = power_col_w)
 
     # RIGHT COLUMN: YEAR-TO-DATE STATS
     ytd = data.get("ytd") or {}

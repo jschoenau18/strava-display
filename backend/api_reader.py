@@ -268,6 +268,52 @@ def get_best_power_efforts(streams : dict, durations_min : tuple[int, ...] = (60
         for d in durations_min
     }
 
+def get_power_metrics(streams : dict, average_power : int | float | None) -> dict:
+
+    """Return average power, normalized power and the best 3-second power."""
+
+    time_stream = streams.get("time") if streams else None
+    watts_stream = streams.get("watts") if streams else None
+    if time_stream is None or watts_stream is None:
+        return {
+            "average_power": round(average_power) if average_power is not None else None,
+            "normalized_power": None,
+            "top_power_3s": None,
+        }
+
+    times = time_stream.data
+    watts = watts_stream.data
+    sample_count = min(len(times), len(watts))
+    if sample_count == 0:
+        return {
+            "average_power": round(average_power) if average_power is not None else None,
+            "normalized_power": None,
+            "top_power_3s": None,
+        }
+
+    times = times[:sample_count]
+    watts = [float(watt) for watt in watts[:sample_count]]
+    rolling_sum = 0.0
+    left = 0
+    rolling_fourths = []
+
+    for right, timestamp in enumerate(times):
+        rolling_sum += watts[right]
+        while timestamp - times[left] > 30:
+            rolling_sum -= watts[left]
+            left += 1
+        rolling_average = rolling_sum / (right - left + 1)
+        rolling_fourths.append(rolling_average ** 4)
+
+    normalized_power = round((sum(rolling_fourths) / len(rolling_fourths)) ** 0.25)
+    top_power_3s = _best_avg_power(times, watts, 3)
+
+    return {
+        "average_power": round(average_power) if average_power is not None else None,
+        "normalized_power": round(normalized_power),
+        "top_power_3s": round(top_power_3s) if top_power_3s is not None else None,
+    }
+
 def get_dashboard_data(client : stravalib.Client, n_recent : int = 1) -> dict:
 
     """
@@ -287,4 +333,5 @@ def get_dashboard_data(client : stravalib.Client, n_recent : int = 1) -> dict:
         "weekly_cycling_distance": get_weekly_cycling_distance(client),
         "last_activity_route": get_last_activity_route(streams),
         "best_power_efforts": get_best_power_efforts(streams),
+        "power_metrics": get_power_metrics(streams, last_activity.get("average_watts") if last_activity else None),
     }
