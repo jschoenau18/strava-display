@@ -81,10 +81,12 @@ python-dotenv
 Pillow
 ```
 
-Wetter- und Geodaten werden mit der Python-Standardbibliothek geladen. Für das
+Wetterdaten werden mit der Python-Standardbibliothek geladen. Für das
 physische Display kommen auf dem Pi zusätzlich die Waveshare-Bibliothek sowie
-`spidev` und `RPi.GPIO` hinzu. Diese werden separat installiert, weil sie
-hardware- und systemabhängig sind.
+`spidev`, `RPi.GPIO`, `gpiozero` und `lgpio` hinzu (die aktuelle
+Waveshare-Bibliothek nutzt `gpiozero` für den GPIO-Zugriff, das wiederum
+`lgpio` als Backend braucht – siehe [Raspberry Pi einrichten](#raspberry-pi-einrichten)).
+Diese werden separat installiert, weil sie hardware- und systemabhängig sind.
 
 ## Datenfluss (ein Programmlauf)
 
@@ -212,7 +214,9 @@ python3 --version
 1. Raspberry Pi OS Lite (32-bit – das einzige Angebot für ARMv6) installieren,
    SPI in `raspi-config` aktivieren (`sudo raspi-config` → *Interface Options*
    → *SPI* → *Yes*, oder `sudo raspi-config nonint do_spi 0`) und das Display
-   mit aufgesetztem HAT am GPIO-Header anschließen. Danach neu starten.
+   mit aufgesetztem HAT am GPIO-Header anschließen. **Danach neu starten** –
+   ohne Neustart bleibt `/dev/spidev0.0` trotz aktivierter Einstellung nicht
+   angelegt (`ls /dev/spidev*` sollte `spidev0.0` und `spidev0.1` zeigen).
 2. Die offizielle Waveshare-Python-Bibliothek auf dem Pi installieren. Sie muss `waveshare_epd.epd4in0e` bereitstellen:
 
     ```sh
@@ -229,7 +233,7 @@ python3 --version
     ```
 
 4. Virtuelle Umgebung anlegen und Abhängigkeiten installieren (`spidev`/`RPi.GPIO`
-   kompilieren aus dem Quellcode, dafür ggf. erst `build-essential`/`python3-dev`
+   kompilieren ggf. aus dem Quellcode, dafür vorher `build-essential`/`python3-dev`
    installieren, falls das fehlschlägt):
 
     ```sh
@@ -237,15 +241,23 @@ python3 --version
     cd ~/strava-api-display
     python3 -m venv .venv
     .venv/bin/pip install -r requirements.txt
-    .venv/bin/pip install spidev RPi.GPIO
+    .venv/bin/pip install spidev RPi.GPIO gpiozero lgpio
     ```
+
+    Die aktuelle Waveshare-Bibliothek greift über `gpiozero` auf die GPIOs zu.
+    Dessen Standard-Backend (`RPi.GPIO`) scheitert auf aktuellen Raspberry Pi
+    OS-Kerneln beim `BUSY`-Pin mit `RuntimeError: Failed to add edge detection`
+    (die alte sysfs-GPIO-Schnittstelle, auf der `RPi.GPIO`s Edge-Detection
+    aufbaut, existiert dort nicht mehr in der gewohnten Form). Deshalb
+    zusätzlich `lgpio` installieren und `gpiozero` per Umgebungsvariable
+    darauf umstellen (siehe Testlauf und Service-Unit unten).
 
 5. `.env` mit den Strava-Zugangsdaten (und – falls schon lokal verbunden – den
    bereits gültigen Tokens) ins Projektverzeichnis kopieren, `STRAVA_UPDATE_DISPLAY=1` setzen.
 6. Testlauf:
 
     ```sh
-    PYTHONPATH=~/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib .venv/bin/python main.py
+    GPIOZERO_PIN_FACTORY=lgpio PYTHONPATH=~/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib .venv/bin/python main.py
     ```
 
     Kein `.env` mit gültigen Tokens dabei? Dann läuft hier interaktiv der
@@ -259,7 +271,9 @@ Die Unit-Dateien in [`deploy/`](deploy/) richten einen systemd-Timer ein, der
 
 1. `deploy/strava-dashboard.service` geht von `jschoenau`/`/home/jschoenau/strava-api-display`
    und der Waveshare-Bibliothek unter `~/e-Paper` aus (inkl. der
-   `Environment=PYTHONPATH=...`-Zeile) – bei abweichenden Pfaden entsprechend anpassen.
+   `Environment=PYTHONPATH=...`-Zeile sowie `Environment=GPIOZERO_PIN_FACTORY=lgpio`,
+   siehe [Raspberry Pi einrichten](#raspberry-pi-einrichten)) – bei abweichenden
+   Pfaden entsprechend anpassen.
 2. Beide Dateien nach `/etc/systemd/system/` kopieren:
 
     ```sh

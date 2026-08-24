@@ -8,4 +8,5 @@ Type=oneshot
 User=jschoenau
 WorkingDirectory=/home/jschoenau/strava-api-display
 Environment=PYTHONPATH=/home/jschoenau/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib
+Environment=GPIOZERO_PIN_FACTORY=lgpio
 ExecStart=/home/jschoenau/strava-api-display/.venv/bin/python main.py
