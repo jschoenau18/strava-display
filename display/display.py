@@ -240,6 +240,37 @@ def draw_icon_value(display : Display,
     text_y = y + icon_h / 2
     display.draw.text((text_x, text_y), text, fill = text_color, font = font, anchor = "lm")
 
+def draw_weather_icon(display : Display, anchor : tuple[int, int], state : str, size : int = 22) -> None:
+
+    draw = display.draw
+    x, y = anchor
+    center_x = x + size // 2
+    center_y = y + size // 2
+    if state == "clear":
+        draw.ellipse((x + 8, y + 8, x + size - 8, y + size - 8), outline = STRAVA_ORANGE, width = 2)
+        ray_start = 3
+        ray_end = 6
+        for start, end in (
+            ((center_x, y + ray_start), (center_x, y + ray_end)),
+            ((center_x, y + size - ray_start), (center_x, y + size - ray_end)),
+            ((x + ray_start, center_y), (x + ray_end, center_y)),
+            ((x + size - ray_start, center_y), (x + size - ray_end, center_y)),
+            ((x + 6, y + 6), (x + 8, y + 8)),
+            ((x + size - 6, y + 6), (x + size - 8, y + 8)),
+            ((x + 6, y + size - 6), (x + 8, y + size - 8)),
+            ((x + size - 6, y + size - 6), (x + size - 8, y + size - 8)),
+        ):
+            draw.line((*start, *end), fill = STRAVA_ORANGE, width = 1)
+    else:
+        draw.ellipse((x + 2, y + 8, x + 14, y + 18), fill = BLACK)
+        draw.ellipse((x + 8, y + 4, x + 19, y + 18), fill = BLACK)
+        draw.rectangle((x + 7, y + 12, x + 21, y + 18), fill = BLACK)
+        if state == "rain":
+            draw.line((x + 8, y + 21, x + 6, y + size), fill = BLUE, width = 2)
+            draw.line((x + 15, y + 21, x + 13, y + size), fill = BLUE, width = 2)
+        elif state == "showers":
+            draw.line((x + 11, y + 21, x + 9, y + size), fill = BLUE, width = 2)
+
 def _project_route_points(points : list[tuple],
                            box_size : tuple[int, int],
                            padding : int = 6) -> list[tuple[float, float]]:
@@ -528,6 +559,16 @@ def make_gui(data : dict) -> Image.Image:
     header.add_text(greeting, (text_x, 0.36), BLACK, fontsize = 20, bold = True, anchor = "lm")
     header.add_text(format_german_date(datetime.now()), (text_x, 0.68), BLACK, fontsize = 12, condensed = True, anchor = "lm")
     header.draw_box(display.draw)
+
+    weather = data.get("weather") or {}
+    if weather:
+        weather_text = f"{weather.get('temperature', '-')}°C  {weather.get('wind_direction', '-')} {weather.get('wind_speed', '-')}"
+        weather_font = _select_font(15, True, True)
+        weather_icon_size = 34
+        weather_icon_x = display.size[0] - MARGIN - weather_icon_size
+        weather_text_x = weather_icon_x - 8
+        display.draw.text((weather_text_x, HEADER_H / 2), weather_text, fill = BLACK, font = weather_font, anchor = "rm")
+        draw_weather_icon(display, (weather_icon_x, int((HEADER_H - weather_icon_size) / 2)), weather.get("precipitation_state", "clear"), size = weather_icon_size)
 
     divider = GUIBox((display.size[0], 3), (0, HEADER_H - 3), WHITE)
     divider.draw_dithered(display.draw, BLACK, WHITE, dither_count = 2)

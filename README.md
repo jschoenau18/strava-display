@@ -271,6 +271,18 @@ nützlich zum Testen von Layout-Änderungen ohne angeschlossenes Display:
 open output/dashboard.png   # macOS
 ```
 
+Das Wetter im Header wird standardmäßig über den öffentlichen Internetzugang
+des Pi grob lokalisiert und für 24 Stunden gecacht. Für den stationären Pi ist
+eine feste, genauere Position in `.env` empfehlenswert:
+
+```env
+WEATHER_LATITUDE=48.0000
+WEATHER_LONGITUDE=7.8500
+```
+
+Ohne diese Werte und ohne Internetverbindung wird als Fallback der letzte
+GPS-Punkt der aktuellen Strava-Fahrt verwendet.
+
 ---
 
 ## Modulreferenz

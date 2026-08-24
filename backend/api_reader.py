@@ -3,6 +3,7 @@ from dotenv import set_key
 import os
 from datetime import datetime, timedelta
 from backend.geodata import get_map_features
+from backend.weather import get_weather
 
 
 def api_setup(dotenv_path : str) -> None:
@@ -338,4 +339,5 @@ def get_dashboard_data(client : stravalib.Client, n_recent : int = 1) -> dict:
         "best_power_efforts": get_best_power_efforts(streams),
         "power_metrics": get_power_metrics(streams, last_activity.get("average_watts") if last_activity else None),
         "map_features": get_map_features(last_activity_route),
+        "weather": get_weather(last_activity_route),
     }
