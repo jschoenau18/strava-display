@@ -1,9 +1,9 @@
 [Unit]
-Description=Run Strava E-Paper Dashboard every 30 minutes
+Description=Run Strava E-Paper Dashboard every 10 minutes
 
 [Timer]
 OnBootSec=2min
-OnUnitActiveSec=30min
+OnUnitActiveSec=10min
 Persistent=true
 
 [Install]

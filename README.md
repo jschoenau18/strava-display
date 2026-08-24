@@ -12,7 +12,7 @@ es nur als PNG, falls kein Display angeschlossen ist).
 - [Projektstruktur](#projektstruktur)
 - [Hardware-Setup](#hardware-setup)
   - [Raspberry Pi im lokalen Netz finden und per SSH verbinden](#raspberry-pi-im-lokalen-netz-finden-und-per-ssh-verbinden)
-    - [Automatisches Update alle 30 Minuten](#automatisches-update-alle-30-minuten)
+    - [Automatisches Update alle 10 Minuten](#automatisches-update-alle-10-minuten)
 - [Lokal testen](#lokal-testen-ohne-display)
 - [Modulreferenz](#modulreferenz)
   - [`main.py`](#mainpy)
@@ -137,7 +137,7 @@ strava-api-display/
 │   ├── eink.py               # Waveshare-Treiber-Wrapper
 │   ├── fonts/                # Roboto (+ Condensed), Regular/Bold
 │   └── img/                  # Logo und Statistik-Icons
-├── deploy/                   # systemd-Unit-Vorlagen für den 30-min-Timer
+├── deploy/                   # systemd-Unit-Vorlagen für den 10-min-Timer
 ├── output/                   # render_dashboard()-Ausgabe (gitignored)
 ├── .env                       # Strava-Credentials/Tokens (gitignored)
 └── requirements.txt
@@ -251,10 +251,10 @@ python3 --version
     Kein `.env` mit gültigen Tokens dabei? Dann läuft hier interaktiv der
     OAuth-Flow von `api_setup()` (Browser-Login, Code ins SSH-Terminal einfügen).
 
-### Automatisches Update alle 30 Minuten
+### Automatisches Update alle 10 Minuten
 
 Die Unit-Dateien in [`deploy/`](deploy/) richten einen systemd-Timer ein, der
-`main.py` alle 30 Minuten ausführt (auch ohne aktive Login-Session, mit Logs
+`main.py` alle 10 Minuten ausführt (auch ohne aktive Login-Session, mit Logs
 über `journalctl`):
 
 1. `deploy/strava-dashboard.service` geht von `jschoenau`/`/home/jschoenau/strava-api-display`
@@ -280,7 +280,7 @@ Alternativ genügt auch ein Cron-Eintrag (`crontab -e`), falls kein systemd
 gewünscht ist:
 
 ```cron
-*/30 * * * * cd /home/jschoenau/strava-api-display && PYTHONPATH=/home/jschoenau/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib .venv/bin/python main.py >> /home/jschoenau/strava-api-display/cron.log 2>&1
+*/10 * * * * cd /home/jschoenau/strava-api-display && PYTHONPATH=/home/jschoenau/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib .venv/bin/python main.py >> /home/jschoenau/strava-api-display/cron.log 2>&1
 ```
 
 ## Lokal testen (ohne Display)
@@ -473,17 +473,18 @@ Fügt ein bereits quantisiertes Bild transparenzkorrekt in `base_image` ein
 Zeichnet einen hellgrauen, geditherten Trennbalken (Schwarz/Weiß-Schachbrett),
 zentriert auf `center_x`.
 
-#### `draw_vertical_divider(display, x, center_y, height, thickness=3) -> None`
+#### `draw_vertical_divider(display, x, center_y, height, thickness=2, color=BLACK) -> None`
 
-Wie `draw_light_divider`, nur vertikal, zentriert auf `center_y` – trennt im
-Header die Temperatur-/Wind-/Prognose-Spalten.
+Zeichnet eine solide (nicht gedithert) vertikale Trennlinie der gegebenen
+Höhe, zentriert auf `center_y` – trennt im Header die
+Temperatur-/Wind-/Prognose-Bereiche.
 
-#### `draw_wind_arrow(display, anchor, degrees, size=16, color=BLACK) -> None`
+#### `draw_wind_arrow(display, anchor, degrees, size=18, color=BLACK) -> None`
 
-Zeichnet einen kleinen Pfeil (Schaft + Spitze) in einer `size × size`-Box,
-der in die Richtung zeigt, in die der Wind weht (`degrees` ist die von
-Open-Meteo gelieferte "kommt aus"-Windrichtung, 0° = Nord, im Uhrzeigersinn;
-der Pfeil zeigt entsprechend um 180° gedreht).
+Zeichnet einen kräftigen Pfeil (dicker Schaft + gefüllte Dreiecksspitze) in
+einer `size × size`-Box, der in die Richtung zeigt, in die der Wind weht
+(`degrees` ist die von Open-Meteo gelieferte "kommt aus"-Windrichtung,
+0° = Nord, im Uhrzeigersinn; der Pfeil zeigt entsprechend um 180° gedreht).
 
 #### `draw_icon_value(display, icon, anchor, icon_h, text, text_color, fontsize, gap=6, center_in_width=None) -> None`
 
@@ -575,15 +576,15 @@ Lädt ein PNG von der Festplatte und ruft `update_display()` auf.
 ## Design-Hinweise: Farben auf der 6-Farb-Palette
 
 Das Spectra-6-Panel kennt nur 6 feste Farben (Schwarz, Weiß, Rot, Gelb, Blau,
-Grün). Für alles, was nicht exakt dazugehört (Strava-Orange, die
-Höhen-Heatmap, hellgraue Trennbalken), wird auf einem transparenten
-RGBA-Overlay in echten Farben gezeichnet und dann per Floyd-Steinberg-Dithering
-(`Image.quantize`) auf die Palette abgebildet (`to_spectra6()`). Das erzeugt
-ein feines Punktmuster, das aus normalem Betrachtungsabstand wie die
-Zielfarbe wirkt.
+Grün). Für alles, was nicht exakt dazugehört (Strava-Orange, hellgraue
+Trennbalken), wird auf einem transparenten RGBA-Overlay in echten Farben
+gezeichnet und dann per Floyd-Steinberg-Dithering (`Image.quantize`) auf die
+Palette abgebildet (`to_spectra6()`). Das erzeugt ein feines Punktmuster,
+das aus normalem Betrachtungsabstand wie die Zielfarbe wirkt.
 
 **Erkannte Grenze:** Dieses Dithering funktioniert gut für Flächen und dicke
-Linien (die Routen-Heatmap, große fette Zahlen ab ca. 20px), macht aber
+Linien (die Routen-Linie, gefüllte Anstiege im Höhenprofil, große fette
+Zahlen ab ca. 20px), macht aber
 **dünne Schrift bei kleiner Schriftgröße (< ~18px) unleserlich** – die
 Buchstaben-Striche sind schmaler als das Dither-Muster braucht, um noch als
 Fläche erkannt zu werden. Deshalb sind kleine Labels/Subtitel im Layout
