@@ -2,6 +2,7 @@ import stravalib
 from dotenv import set_key
 import os
 from datetime import datetime, timedelta
+from backend.geodata import get_map_features
 
 
 def api_setup(dotenv_path : str) -> None:
@@ -324,6 +325,7 @@ def get_dashboard_data(client : stravalib.Client, n_recent : int = 1) -> dict:
     last_activity = recent_activities[0] if recent_activities else None
 
     streams = get_activity_streams(client, last_activity["id"]) if last_activity else {}
+    last_activity_route = get_last_activity_route(streams)
 
     return {
         "athlete_name": get_athlete_name(client),
@@ -331,7 +333,8 @@ def get_dashboard_data(client : stravalib.Client, n_recent : int = 1) -> dict:
         "last_activity": last_activity,
         "recent_activities": recent_activities,
         "weekly_cycling_distance": get_weekly_cycling_distance(client),
-        "last_activity_route": get_last_activity_route(streams),
+        "last_activity_route": last_activity_route,
         "best_power_efforts": get_best_power_efforts(streams),
         "power_metrics": get_power_metrics(streams, last_activity.get("average_watts") if last_activity else None),
+        "map_features": get_map_features(last_activity_route),
     }

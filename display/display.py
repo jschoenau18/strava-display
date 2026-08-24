@@ -280,10 +280,9 @@ def _project_route_points(points : list[tuple],
 STRAVA_ORANGE = (252, 76, 2, 255)
 
 ELEVATION_HEATMAP_STOPS = [
-    (0.00, (40, 70, 200)),    # NIEDRIG: BLAU
-    (0.35, (0, 170, 90)),     # GRÜN
-    (0.7, (240, 200, 20)),    # GELB
-    (1.00, (220, 30, 20)),    # HOCH: ROT
+    (0.00, (252, 76, 2)),     # NIEDRIG: STRAVA-ORANGE
+    (0.45, (240, 150, 20)),   # MITTEL: ORANGE
+    (1.00, (255, 245, 150)),  # HOCH: HELLGELB
 ]
 
 def _elevation_color(t : float) -> tuple[int, int, int, int]:
@@ -310,6 +309,7 @@ def draw_route_card(display : Display,
                      anchor : tuple[int, int],
                      size : tuple[int, int],
                      points : list[tuple],
+                     map_features : dict | None = None,
                      padding : int = 14,
                      line_width : int = 4) -> None:
 
@@ -327,7 +327,20 @@ def draw_route_card(display : Display,
     overlay_draw = ImageDraw.Draw(overlay)
 
     if len(points) >= 2:
-        pixel_points = _project_route_points(points, size, padding)
+        feature_lines = (map_features or {}).get("contours", []) + (map_features or {}).get("rivers", [])
+        projection_points = points + [point for line in feature_lines for point in line]
+        projected_points = _project_route_points(projection_points, size, padding)
+        pixel_points = projected_points[:len(points)]
+        feature_offset = len(points)
+        for line in (map_features or {}).get("contours", []):
+            line_points = projected_points[feature_offset:feature_offset + len(line)]
+            feature_offset += len(line)
+            overlay_draw.line(line_points, fill = (150, 150, 150, 180), width = 1)
+        for line in (map_features or {}).get("rivers", []):
+            line_points = projected_points[feature_offset:feature_offset + len(line)]
+            feature_offset += len(line)
+            overlay_draw.line(line_points, fill = (30, 90, 220, 220), width = 2)
+
         elevations = [p[2] if len(p) > 2 else None for p in points]
 
         if all(e is not None for e in elevations) and min(elevations) < max(elevations):  # type: ignore[type-var]
@@ -565,16 +578,17 @@ def make_gui(data : dict) -> Image.Image:
         icon_anchor = (col_x, rows_y + (INFO_BOX_H - icon_h) / 2)
         draw_icon_value(display, icon, icon_anchor, icon_h, value_text, BLACK, fontsize = 18, center_in_width = col_w)
 
-    route_y = rows_y + INFO_BOX_H + GAP
+    route_gap = 6
+    route_y = rows_y + INFO_BOX_H + route_gap
     legend_w = 30
     power_box_h = 48
-    route_h = rows_h - INFO_BOX_H - GAP - GAP - power_box_h
+    route_h = rows_h - INFO_BOX_H - route_gap - route_gap - power_box_h
     route_points = data.get("last_activity_route") or []
-    route_x = MARGIN + legend_w + GAP
-    draw_route_card(display, pal_img, (route_x, route_y), (left_w - legend_w - GAP, route_h), route_points, padding = 14)
+    route_x = MARGIN + legend_w + route_gap
+    draw_route_card(display, pal_img, (route_x, route_y), (left_w - legend_w - route_gap, route_h), route_points, map_features = data.get("map_features"), padding = 6)
     draw_elevation_legend(display, pal_img, (MARGIN, route_y), (legend_w, route_h))
 
-    power_box_y = route_y + route_h + GAP
+    power_box_y = route_y + route_h + route_gap
     power_metrics = data.get("power_metrics") or {}
     power_chips = [
         ("Average_P.jpg", power_metrics.get("average_power")),
