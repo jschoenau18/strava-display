@@ -345,6 +345,30 @@ def draw_route_card(display : Display,
     quantized = to_spectra6(overlay, pal_img)
     paste_with_transparency(display.image, quantized, anchor)
 
+def draw_elevation_legend(display : Display,
+                          pal_img : Image.Image,
+                          anchor : tuple[int, int],
+                          size : tuple[int, int]) -> None:
+
+    overlay = Image.new("RGBA", size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    label_font = _select_font(11, False, True)
+    line_y = size[1] / 2
+    line_left = 92
+    line_right = 152
+    segments = 16
+    segment_width = (line_right - line_left) / segments
+
+    for i in range(segments):
+        t = i / (segments - 1)
+        x0 = line_left + i * segment_width
+        x1 = line_left + (i + 1) * segment_width
+        overlay_draw.line((x0, line_y, x1, line_y), fill = _elevation_color(t), width = 5)
+
+    overlay_draw.text((line_right + 10, line_y), "Höhe", fill = (0, 0, 0, 255), font = label_font, anchor = "lm")
+    quantized = to_spectra6(overlay, pal_img)
+    paste_with_transparency(display.image, quantized, anchor)
+
 def render_stat_block(display : Display,
                        pal_img : Image.Image,
                        anchor : tuple[int, int],
@@ -367,6 +391,44 @@ def render_stat_block(display : Display,
         x = entry["rel_pos"][0] * size[0]
         y = entry["rel_pos"][1] * size[1]
         overlay_draw.text((x, y), entry["text"], fill = entry["color"], font = font, anchor = entry.get("anchor", "mm"))
+
+    quantized = to_spectra6(overlay, pal_img)
+    paste_with_transparency(display.image, quantized, anchor)
+
+def draw_weekly_distance_chart(display : Display,
+                               pal_img : Image.Image,
+                               anchor : tuple[int, int],
+                               size : tuple[int, int],
+                               weekly_distances : list[dict]) -> None:
+
+    overlay = Image.new("RGBA", size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    date_font = _select_font(10, False, True)
+    km_font = _select_font(16, False, True)
+
+    chart_left = 30
+    chart_right = size[0] - 12
+    chart_top = 12
+    chart_bottom = size[1] - 18
+    chart_height = chart_bottom - chart_top
+    km_label = Image.new("RGBA", (24, 42), (0, 0, 0, 0))
+    km_label_draw = ImageDraw.Draw(km_label)
+    km_label_draw.text((12, 21), "KM", fill = (0, 0, 0, 255), font = km_font, anchor = "mm")
+    km_label = km_label.rotate(90, expand = True)
+    overlay.alpha_composite(km_label, (0, int((chart_top + chart_bottom - km_label.height) / 2)))
+    max_distance = max((week.get("distance_km", 0) for week in weekly_distances), default = 0)
+    max_distance = max(max_distance, 1)
+    bar_gap = 5
+    bar_width = (chart_right - chart_left - bar_gap * (len(weekly_distances) - 1)) / len(weekly_distances) if weekly_distances else 0
+
+    overlay_draw.line((chart_left, chart_bottom, chart_right, chart_bottom), fill = (0, 0, 0, 255), width = 1)
+    for i, week in enumerate(weekly_distances):
+        distance = week.get("distance_km", 0)
+        bar_x = chart_left + i * (bar_width + bar_gap)
+        bar_h = chart_height * distance / max_distance
+        bar_top = chart_bottom - bar_h
+        overlay_draw.rectangle((bar_x, bar_top, bar_x + bar_width, chart_bottom), fill = STRAVA_ORANGE)
+        overlay_draw.text((bar_x + bar_width / 2, size[1] - 7), week.get("label", ""), fill = (0, 0, 0, 255), font = date_font, anchor = "ms")
 
     quantized = to_spectra6(overlay, pal_img)
     paste_with_transparency(display.image, quantized, anchor)
@@ -498,11 +560,13 @@ def make_gui(data : dict) -> Image.Image:
         icon_anchor = (col_x, rows_y + (INFO_BOX_H - icon_h) / 2)
         draw_icon_value(display, icon, icon_anchor, icon_h, value_text, BLACK, fontsize = 18, center_in_width = col_w)
 
-    # ROUTE-SCHEMA DER LETZTEN AKTIVITÄT
     route_y = rows_y + INFO_BOX_H + GAP
-    route_h = rows_h - INFO_BOX_H - GAP
+    legend_h = 26
+    legend_gap = 4
+    route_h = rows_h - INFO_BOX_H - GAP - legend_h - legend_gap
     route_points = data.get("last_activity_route") or []
     draw_route_card(display, pal_img, (MARGIN, route_y), (left_w, route_h), route_points, padding = 14)
+    draw_elevation_legend(display, pal_img, (MARGIN, route_y + route_h + legend_gap), (left_w, legend_h))
 
     # RIGHT COLUMN: YEAR-TO-DATE STATS
     ytd = data.get("ytd") or {}
@@ -510,8 +574,6 @@ def make_gui(data : dict) -> Image.Image:
     ytd_elevation_m = ytd.get("elevation_gain_m", 0)
     earth_pct = ytd_distance_km / EARTH_CIRCUMFERENCE_KM * 100
     everest_x = ytd_elevation_m / EVEREST_HEIGHT_M
-
-    best_efforts = data.get("best_power_efforts") or {}
 
     right_label = GUIBox((right_w, LABEL_H), (right_x, content_y), WHITE)
     right_label.add_text("DIESES JAHR", (0.5, 0.5), BLACK, fontsize = 20, bold = True, anchor = "mm")
@@ -552,16 +614,7 @@ def make_gui(data : dict) -> Image.Image:
     draw_light_divider(display, divider_center_x, y, divider_w)
     y += DIVIDER_GAP + DIVIDER_THICKNESS
 
-    best_efforts_entries = [
-        {"text": "BESTLEISTUNG (W)", "rel_pos": (0.5, 0.18), "color": (0, 0, 0, 255), "fontsize": 16, "bold": False},
-    ]
-    for i, duration_min in enumerate((60, 20, 5)):
-        col_x = (i + 0.5) / 3
-        value = best_efforts.get(duration_min)
-        best_efforts_entries.append({"text": f"{duration_min} MIN", "rel_pos": (col_x, 0.52), "color": (0, 0, 0, 255), "fontsize": 13, "bold": False, "condensed": True})
-        best_efforts_entries.append({"text": f"{value}" if value is not None else "-", "rel_pos": (col_x, 0.84), "color": STRAVA_ORANGE, "fontsize": 20})
-
-    render_stat_block(display, pal_img, (right_x, y), (right_w, block_h), best_efforts_entries)
+    draw_weekly_distance_chart(display, pal_img, (right_x, y), (right_w, block_h), data.get("weekly_cycling_distance") or [])
 
     return display.image
 

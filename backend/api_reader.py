@@ -1,7 +1,7 @@
 import stravalib
 from dotenv import set_key
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 def api_setup(dotenv_path : str) -> None:
@@ -108,6 +108,36 @@ def get_recent_activities(client : stravalib.Client, n : int) -> list[dict]:
     """
 
     return [_activity_to_dict(act) for act in client.get_activities(limit = n)]
+
+def get_weekly_cycling_distance(client : stravalib.Client, weeks : int = 6) -> list[dict]:
+
+    """
+    Returns cycling distance grouped by Monday-to-Sunday week, oldest first.
+    """
+
+    today = datetime.now().date()
+    current_week = today - timedelta(days = today.weekday())
+    first_week = current_week - timedelta(weeks = weeks - 1)
+    distances = {first_week + timedelta(weeks = i): 0.0 for i in range(weeks)}
+    after = datetime.combine(first_week, datetime.min.time())
+    cycling_sports = {
+        "Ride", "VirtualRide", "GravelRide", "MountainBikeRide",
+        "EMountainBikeRide", "EBikeRide", "Velomobile", "Handcycle",
+    }
+
+    for activity in client.get_activities(after = after):
+        sport_type = getattr(activity.sport_type, "root", str(activity.sport_type))
+        if activity.start_date_local is None or sport_type not in cycling_sports:
+            continue
+
+        activity_week = activity.start_date_local.date() - timedelta(days = activity.start_date_local.weekday())
+        if activity_week in distances and activity.distance is not None:
+            distances[activity_week] += float(activity.distance) / 1000
+
+    return [
+        {"label": week.strftime("%d.%m."), "distance_km": round(distance, 1)}
+        for week, distance in distances.items()
+    ]
 
 def get_last_activity_route(streams : dict) -> list[tuple[float, float, float | None]]:
 
@@ -254,6 +284,7 @@ def get_dashboard_data(client : stravalib.Client, n_recent : int = 1) -> dict:
         "ytd": get_ytd_stats(client),
         "last_activity": last_activity,
         "recent_activities": recent_activities,
+        "weekly_cycling_distance": get_weekly_cycling_distance(client),
         "last_activity_route": get_last_activity_route(streams),
         "best_power_efforts": get_best_power_efforts(streams),
     }
