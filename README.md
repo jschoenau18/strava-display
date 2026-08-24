@@ -10,6 +10,7 @@ es nur als PNG, falls kein Display angeschlossen ist).
 - [Datenfluss](#datenfluss-ein-programmlauf)
 - [Projektstruktur](#projektstruktur)
 - [Hardware-Setup](#hardware-setup)
+    - [Raspberry Pi im lokalen Netz finden und per SSH verbinden](#raspberry-pi-im-lokalen-netz-finden-und-per-ssh-verbinden)
   - [Automatisches Update alle 30 Minuten](#automatisches-update-alle-30-minuten)
 - [Lokal testen](#lokal-testen-ohne-display)
 - [Modulreferenz](#modulreferenz)
@@ -139,6 +140,50 @@ Größe: 600×400 (4")
 Single-Core ARM1176JZF-S @ 1GHz, 512 MB RAM, **ARMv6**. Deployment läuft
 deshalb nativ über eine venv (kein Docker – moderne Container-Images
 unterstützen ARMv6 nicht mehr, und der Chip ist nicht 64-bit-fähig).
+
+### Raspberry Pi im lokalen Netz finden und per SSH verbinden
+
+Der Pi muss eingeschaltet und mit demselben lokalen Netz wie dein Rechner
+verbunden sein. Die Adresse lässt sich oft direkt über den mDNS-Namen finden:
+
+```sh
+ping raspberrypi.local
+ssh <pi-user>@raspberrypi.local
+```
+
+Falls der Hostname nicht aufgelöst wird, bekannte Geräte im lokalen Netz über
+die ARP-Tabelle anzeigen:
+
+```sh
+arp -a
+```
+
+Alternativ kann das eigene lokale Netz ermittelt und mit `nmap` nach SSH-
+Diensten durchsucht werden. `nmap` lässt sich unter macOS z. B. mit Homebrew
+installieren (`brew install nmap`):
+
+```sh
+ipconfig getifaddr en0       # eigene WLAN-Adresse, z. B. 192.168.1.23
+nmap -sn 192.168.1.0/24      # aktive Geräte im eigenen Netz anzeigen
+nmap -p 22 --open 192.168.1.0/24
+```
+
+Die gefundene IP-Adresse anschließend für die SSH-Verbindung und beim
+`rsync`-Aufruf verwenden:
+
+```sh
+ssh <pi-user>@<pi-ip>
+rsync -avz --exclude='.venv' --exclude='__pycache__' --exclude='.git' --exclude='output' \
+    ./ <pi-user>@<pi-ip>:~/strava-api-display/
+```
+
+Beim ersten Verbindungsaufbau den Host-Schlüssel mit `yes` bestätigen und das
+Passwort des Pi-Benutzers eingeben. Nach erfolgreicher Verbindung prüfen:
+
+```sh
+hostname
+python3 --version
+```
 
 ### Raspberry Pi einrichten
 
