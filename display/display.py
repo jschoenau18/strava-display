@@ -352,20 +352,24 @@ def draw_elevation_legend(display : Display,
 
     overlay = Image.new("RGBA", size, (0, 0, 0, 0))
     overlay_draw = ImageDraw.Draw(overlay)
-    label_font = _select_font(11, False, True)
-    line_y = size[1] / 2
-    line_left = 92
-    line_right = 152
+    label_font = _select_font(13, False, True)
+    line_x = 22
+    line_top = 50
+    line_bottom = size[1] - 50
     segments = 16
-    segment_width = (line_right - line_left) / segments
+    segment_height = (line_bottom - line_top) / segments
 
     for i in range(segments):
         t = i / (segments - 1)
-        x0 = line_left + i * segment_width
-        x1 = line_left + (i + 1) * segment_width
-        overlay_draw.line((x0, line_y, x1, line_y), fill = _elevation_color(t), width = 5)
+        y0 = line_bottom - i * segment_height
+        y1 = line_bottom - (i + 1) * segment_height
+        overlay_draw.line((line_x, y0, line_x, y1), fill = _elevation_color(t), width = 5)
 
-    overlay_draw.text((line_right + 10, line_y), "Höhe", fill = (0, 0, 0, 255), font = label_font, anchor = "lm")
+    label = Image.new("RGBA", (30, 14), (0, 0, 0, 0))
+    label_draw = ImageDraw.Draw(label)
+    label_draw.text((15, 7), "Höhe", fill = (0, 0, 0, 255), font = label_font, anchor = "mm")
+    label = label.rotate(90, expand = True)
+    overlay.alpha_composite(label, (0, int((size[1] - label.height) / 2)))
     quantized = to_spectra6(overlay, pal_img)
     paste_with_transparency(display.image, quantized, anchor)
 
@@ -561,15 +565,15 @@ def make_gui(data : dict) -> Image.Image:
         draw_icon_value(display, icon, icon_anchor, icon_h, value_text, BLACK, fontsize = 18, center_in_width = col_w)
 
     route_y = rows_y + INFO_BOX_H + GAP
-    legend_h = 26
-    legend_gap = 4
+    legend_w = 30
     power_box_h = 48
-    route_h = rows_h - INFO_BOX_H - GAP - legend_h - legend_gap - GAP - power_box_h
+    route_h = rows_h - INFO_BOX_H - GAP - GAP - power_box_h
     route_points = data.get("last_activity_route") or []
-    draw_route_card(display, pal_img, (MARGIN, route_y), (left_w, route_h), route_points, padding = 14)
-    draw_elevation_legend(display, pal_img, (MARGIN, route_y + route_h + legend_gap), (left_w, legend_h))
+    route_x = MARGIN + legend_w + GAP
+    draw_route_card(display, pal_img, (route_x, route_y), (left_w - legend_w - GAP, route_h), route_points, padding = 14)
+    draw_elevation_legend(display, pal_img, (MARGIN, route_y), (legend_w, route_h))
 
-    power_box_y = route_y + route_h + legend_gap + legend_h + GAP
+    power_box_y = route_y + route_h + GAP
     power_metrics = data.get("power_metrics") or {}
     power_chips = [
         ("Average_P.jpg", power_metrics.get("average_power")),
