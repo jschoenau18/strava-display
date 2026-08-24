@@ -271,18 +271,22 @@ def draw_weather_icon(display : Display, anchor : tuple[int, int], state : str, 
         elif state == "showers":
             draw.line((x + 11, y + 21, x + 9, y + size), fill = BLUE, width = 2)
 
-def _project_route_points(points : list[tuple],
-                           box_size : tuple[int, int],
-                           padding : int = 6) -> list[tuple[float, float]]:
+def _route_projection(route_points : list[tuple],
+                       box_size : tuple[int, int],
+                       padding : int = 6):
 
     """
-    Projects (lat, lon, ...) GPS points onto pixel coordinates that fit
-    inside box_size while preserving the route's real-world aspect
-    ratio. Any extra tuple elements (e.g. elevation) are ignored.
+    Derives a lat/lon -> pixel projection purely from route_points, so the
+    route always fills box_size as much as its own aspect ratio allows
+    (e.g. a north-south route fills the full available height). Returns a
+    function that projects any (lat, lon, ...) points with that same
+    transform - e.g. contour/river lines, which may run wider than the
+    route itself and are then simply clipped at the box edges instead of
+    shrinking the route to fit them in.
     """
 
-    lats = [p[0] for p in points]
-    lons = [p[1] for p in points]
+    lats = [p[0] for p in route_points]
+    lons = [p[1] for p in route_points]
     min_lat, max_lat = min(lats), max(lats)
     min_lon, max_lon = min(lons), max(lons)
 
@@ -300,13 +304,16 @@ def _project_route_points(points : list[tuple],
     offset_x = padding + (avail_w - drawn_w) / 2
     offset_y = padding + (avail_h - drawn_h) / 2
 
-    pixel_points = []
-    for p in points:
-        x = offset_x + (p[1] - min_lon) * math.cos(lat_mid_rad) * scale
-        y = offset_y + (max_lat - p[0]) * scale  # BILD-Y WÄCHST NACH UNTEN, BREITENGRAD NACH OBEN
-        pixel_points.append((x, y))
+    def project(points : list[tuple]) -> list[tuple[float, float]]:
+        return [
+            (
+                offset_x + (p[1] - min_lon) * math.cos(lat_mid_rad) * scale,
+                offset_y + (max_lat - p[0]) * scale,  # BILD-Y WÄCHST NACH UNTEN, BREITENGRAD NACH OBEN
+            )
+            for p in points
+        ]
 
-    return pixel_points
+    return project
 
 STRAVA_ORANGE = (252, 76, 2, 255)
 
@@ -358,19 +365,12 @@ def draw_route_card(display : Display,
     overlay_draw = ImageDraw.Draw(overlay)
 
     if len(points) >= 2:
-        feature_lines = (map_features or {}).get("contours", []) + (map_features or {}).get("rivers", [])
-        projection_points = points + [point for line in feature_lines for point in line]
-        projected_points = _project_route_points(projection_points, size, padding)
-        pixel_points = projected_points[:len(points)]
-        feature_offset = len(points)
+        project = _route_projection(points, size, padding)
+        pixel_points = project(points)
         for line in (map_features or {}).get("contours", []):
-            line_points = projected_points[feature_offset:feature_offset + len(line)]
-            feature_offset += len(line)
-            overlay_draw.line(line_points, fill = (150, 150, 150, 180), width = 1)
+            overlay_draw.line(project(line), fill = (150, 150, 150, 180), width = 1)
         for line in (map_features or {}).get("rivers", []):
-            line_points = projected_points[feature_offset:feature_offset + len(line)]
-            feature_offset += len(line)
-            overlay_draw.line(line_points, fill = (30, 90, 220, 220), width = 2)
+            overlay_draw.line(project(line), fill = (30, 90, 220, 220), width = 2)
 
         elevations = [p[2] if len(p) > 2 else None for p in points]
 

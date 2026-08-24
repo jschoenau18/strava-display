@@ -11,6 +11,13 @@ CACHE_DIR = Path(__file__).resolve().parent.parent / "output" / "geodata-cache"
 GRID_SIZE = 9
 CONTOUR_INTERVAL_M = 50
 
+# WIDTH:HEIGHT DER ROUTEN-KARTE IN display.make_gui() (LINKE SPALTE MINUS
+# HOEHEN-LEGENDE). display.py SKALIERT DIE ROUTE SO, DASS SIE DIESES
+# SEITENVERHAELTNIS AUSFUELLT (SIEHE _route_projection) - WUERDE DIE BBOX HIER
+# NICHT DASSELBE VERHAELTNIS TREFFEN, REICHEN HOEHENLINIEN/FLUESSE NACH DEM
+# SKALIEREN NIE BIS AN DEN RAND EINER SCHMALEN (Z.B. NORD-SUED-) ROUTE.
+ROUTE_CARD_ASPECT = 289 / 181
+
 
 def _cache_path(prefix: str, bbox: tuple[float, float, float, float]) -> Path:
     key = ",".join(f"{value:.4f}" for value in bbox)
@@ -24,17 +31,37 @@ def _fetch_json(url: str, timeout: int = 12) -> dict:
         return json.load(response)
 
 
-def _route_bbox(route: list[tuple], padding: float = 0.01) -> tuple[float, float, float, float] | None:
+def _route_bbox(route: list[tuple], padding: float = 0.002) -> tuple[float, float, float, float] | None:
     if not route:
         return None
 
     latitudes = [point[0] for point in route]
     longitudes = [point[1] for point in route]
+    min_lat, max_lat = min(latitudes), max(latitudes)
+    min_lon, max_lon = min(longitudes), max(longitudes)
+
+    lat_mid_rad = math.radians((min_lat + max_lat) / 2)
+    cos_lat = math.cos(lat_mid_rad) or 1e-9
+    lat_range = (max_lat - min_lat) or 1e-6
+    lon_range_corrected = ((max_lon - min_lon) or 1e-6) * cos_lat
+
+    # KUERZERE ACHSE AUFWEITEN, BIS DIE BBOX DAS SEITENVERHAELTNIS DER
+    # ANZEIGE-KARTE TRIFFT (SIEHE ROUTE_CARD_ASPECT), STATT NUR DER ROUTE
+    # SELBST ZU FOLGEN.
+    if lon_range_corrected / lat_range < ROUTE_CARD_ASPECT:
+        target_lon_range = (ROUTE_CARD_ASPECT * lat_range) / cos_lat
+        center_lon = (min_lon + max_lon) / 2
+        min_lon, max_lon = center_lon - target_lon_range / 2, center_lon + target_lon_range / 2
+    else:
+        target_lat_range = lon_range_corrected / ROUTE_CARD_ASPECT
+        center_lat = (min_lat + max_lat) / 2
+        min_lat, max_lat = center_lat - target_lat_range / 2, center_lat + target_lat_range / 2
+
     return (
-        min(latitudes) - padding,
-        min(longitudes) - padding,
-        max(latitudes) + padding,
-        max(longitudes) + padding,
+        min_lat - padding,
+        min_lon - padding,
+        max_lat + padding,
+        max_lon + padding,
     )
 
 
