@@ -550,6 +550,9 @@ def make_gui(data : dict) -> Image.Image:
     left_label.add_text(last_act_name, (0.5, 0.5), BLACK, fontsize = 20, bold = True, anchor = "mm")
 
     left_label.draw_box(display.draw)
+    kudos_icon = load_icon(pal_img, "Kudos.bmp")
+    kudos = recent[0].get("kudos_count", 0) if recent else 0
+    draw_icon_value(display, kudos_icon, (MARGIN + left_w - 62, content_y), 22, str(int(kudos)), BLACK, fontsize = 14)
 
 
 

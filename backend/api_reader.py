@@ -100,6 +100,7 @@ def _activity_to_dict(act) -> dict:
         "elevation_gain_m": round(float(act.total_elevation_gain)) if act.total_elevation_gain is not None else 0,
         "average_watts": round(act.average_watts) if act.average_watts is not None else None,
         "average_speed_kmh": round(float(act.average_speed) * 3.6, 1) if act.average_speed is not None else None,
+        "kudos_count": int(act.kudos_count or 0),
     }
 
 def get_recent_activities(client : stravalib.Client, n : int) -> list[dict]:
