@@ -7,6 +7,7 @@ es nur als PNG, falls kein Display angeschlossen ist).
 ## Inhalt
 
 - [Architektur](#architektur)
+- [Abhängigkeiten](#abhängigkeiten)
 - [Datenfluss](#datenfluss-ein-programmlauf)
 - [Projektstruktur](#projektstruktur)
 - [Hardware-Setup](#hardware-setup)
@@ -16,6 +17,8 @@ es nur als PNG, falls kein Display angeschlossen ist).
 - [Modulreferenz](#modulreferenz)
   - [`main.py`](#mainpy)
   - [`backend/api_reader.py`](#backendapi_readerpy)
+    - [`backend/geodata.py`](#backendgeodatapy)
+    - [`backend/weather.py`](#backendweatherpy)
   - [`display/display.py`](#displaydisplaypy)
   - [`display/eink.py`](#displayeinkpy)
 - [Design-Hinweise: Farben auf der 6-Farb-Palette](#design-hinweise-farben-auf-der-6-farb-palette)
@@ -31,6 +34,8 @@ graph LR
 
     subgraph Backend
         API["backend/api_reader.py"]
+        GEO["backend/geodata.py"]
+        WEATHER["backend/weather.py"]
     end
 
     subgraph Rendering
@@ -45,6 +50,10 @@ graph LR
     MAIN["main.py"] -->|liest/schreibt Tokens| ENV
     MAIN -->|api_setup / refresh_api_access\nget_dashboard_data| API
     API <-->|OAuth, Aktivitäten, Streams| STRAVA
+    API --> GEO
+    API --> WEATHER
+    GEO <-->|Höhenlinien, Flüsse| MAP["OpenTopoData / OpenStreetMap"]
+    WEATHER <-->|Wetter, Standort| WX["Open-Meteo / IP-Geolokalisierung"]
     MAIN -->|dashboard_data dict| DISP
     DISP -->|PNG| OUT[("output/dashboard.png")]
     MAIN -->|render_dashboard image| DISP
@@ -57,13 +66,30 @@ graph LR
 | Modul | Zuständigkeit |
 | ------------------------ | ------------- |
 | `main.py` | Orchestriert den Ablauf: Auth-Status prüfen, Daten holen, Bild rendern, optional aufs Display schreiben. |
-| `backend/api_reader.py` | Einziger Ort mit Strava-API-Zugriff (`stravalib`). Liefert reine Python-`dict`/`list`-Daten, keine Bild- oder Display-Logik. |
+| `backend/api_reader.py` | Strava-API-Zugriff (`stravalib`) sowie Aufbereitung von Aktivitäten, Routen, Power und Kudos. |
+| `backend/geodata.py` | Lädt und cached Höhenraster von OpenTopoData sowie Flussgeometrien von OpenStreetMap/Overpass. |
+| `backend/weather.py` | Ermittelt den Pi-Standort und lädt Temperatur, Wind und Niederschlagsprognose von Open-Meteo. |
 | `display/display.py` | Baut aus dem Daten-`dict` ein PIL-Bild für die feste 6-Farben-E-Ink-Palette. Kein Netzwerkzugriff. |
 | `display/eink.py` | Dünner Treiber-Wrapper, der ein fertiges Bild über die Waveshare-Bibliothek ans Panel schickt. Einziger Ort mit Hardwarezugriff. |
 
 Die Trennung ist bewusst: `api_reader.py` und `display.py` kennen sich nicht
 gegenseitig, sie kommunizieren nur über das von `get_dashboard_data()`
 zurückgegebene `dict` (siehe [Datenformat](#get_dashboard_dataclient-stravalibclient-n_recent-int--1---dict)).
+
+## Abhängigkeiten
+
+Die Python-Laufzeit benötigt nur die drei Pakete aus [`requirements.txt`](requirements.txt):
+
+```text
+stravalib
+python-dotenv
+Pillow
+```
+
+Wetter- und Geodaten werden mit der Python-Standardbibliothek geladen. Für das
+physische Display kommen auf dem Pi zusätzlich die Waveshare-Bibliothek sowie
+`spidev` und `RPi.GPIO` hinzu. Diese werden separat installiert, weil sie
+hardware- und systemabhängig sind.
 
 ## Datenfluss (ein Programmlauf)
 
@@ -109,12 +135,14 @@ sequenceDiagram
 strava-api-display/
 ├── main.py                  # Einstiegspunkt / Orchestrierung
 ├── backend/
-│   └── api_reader.py        # Strava-Auth + Datenabruf
+│   ├── api_reader.py        # Strava-Auth + Datenabruf
+│   ├── geodata.py            # Höhenlinien + Flüsse, mit Cache
+│   └── weather.py            # Pi-Standort + Wetterdaten
 ├── display/
 │   ├── display.py           # Bild-Rendering (PIL) für die 6-Farb-Palette
 │   ├── eink.py               # Waveshare-Treiber-Wrapper
 │   ├── fonts/                # Roboto (+ Condensed), Regular/Bold
-│   └── img/                  # Strava-Logo + Stat-Icons (speed/ascent/distance)
+│   └── img/                  # Logo und Statistik-Icons
 ├── deploy/                   # systemd-Unit-Vorlagen für den 30-min-Timer
 ├── output/                   # render_dashboard()-Ausgabe (gitignored)
 ├── .env                       # Strava-Credentials/Tokens (gitignored)
@@ -384,6 +412,20 @@ Dict, das `display.render_dashboard()` erwartet:
 
 ---
 
+### `backend/geodata.py`
+
+Lädt für den Bereich der letzten Route ein kleines Höhenraster von OpenTopoData
+und Flussgeometrien von OpenStreetMap/Overpass. Die Antworten werden unter
+`output/geodata-cache/` gespeichert. Bei nicht erreichbaren Diensten liefert
+das Modul leere Layer, damit das Dashboard trotzdem gerendert werden kann.
+
+### `backend/weather.py`
+
+Lädt über Open-Meteo Temperatur, Wind und die Niederschlagswahrscheinlichkeit
+für die nächsten 30 Minuten. Die Standortreihenfolge ist: Koordinaten aus
+`WEATHER_LATITUDE`/`WEATHER_LONGITUDE`, 24-Stunden-IP-Cache, letzter GPS-Punkt
+der Route.
+
 ### `display/display.py`
 
 Baut aus dem Dashboard-Dict ein `PIL.Image` (Modus `P`, feste
@@ -455,7 +497,7 @@ Geschwindigkeit/Höhenmeter/Distanz-Chips.
 Zeichnet die Routen-Silhouette der letzten Aktivität:
 
 - `points` = Liste von `(lat, lon)` oder `(lat, lon, elevation_m)` (siehe `get_last_activity_route()`).
-- Liegen für **alle** Punkte Höhendaten vor und gibt es einen Höhenunterschied, wird die Linie segmentweise als **Höhen-Heatmap** gefärbt (Blau → Grün → Gelb → Rot, siehe `_elevation_color`).
+- Liegen für **alle** Punkte Höhendaten vor und gibt es einen Höhenunterschied, wird die Linie segmentweise als **Höhen-Heatmap** gefärbt (Strava-Orange → Hellgelb, siehe `_elevation_color`).
 - Sonst Fallback: einfarbige Strava-Orange-Linie.
 - Bei weniger als 2 Punkten: Platzhaltertext "Keine GPS-Daten".
 - Projektion via `_project_route_points()` (längengradkorrigiert, seitenverhältnistreu, zentriert in `size`).
