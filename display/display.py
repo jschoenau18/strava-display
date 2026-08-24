@@ -454,6 +454,13 @@ def draw_weekly_distance_chart(display : Display,
     date_font = _select_font(10, False, True)
     km_font = _select_font(16, False, True)
 
+    if not weekly_distances:
+        placeholder_font = _select_font(13, False, True)
+        overlay_draw.text((size[0] / 2, size[1] / 2), "Keine Wochendaten", fill = (0, 0, 0, 255), font = placeholder_font, anchor = "mm")
+        quantized = to_spectra6(overlay, pal_img)
+        paste_with_transparency(display.image, quantized, anchor)
+        return
+
     chart_left = 30
     chart_right = size[0] - 12
     chart_top = 12
@@ -585,15 +592,16 @@ def make_gui(data : dict) -> Image.Image:
 
     # LEFT COLUMN: RECENT ACTIVITIES
     recent = data.get("recent_activities") or []
-    last_act_name : str = recent[0].get("name", "-")
+    last_act_name : str = recent[0].get("name", "-") if recent else "Keine Aktivität"
     left_label = GUIBox((left_w, LABEL_H), (MARGIN, content_y), WHITE)
-    
+
     left_label.add_text(last_act_name, (0.5, 0.5), BLACK, fontsize = 20, bold = True, anchor = "mm")
 
     left_label.draw_box(display.draw)
-    kudos_icon = load_icon(pal_img, "Kudos.bmp")
-    kudos = recent[0].get("kudos_count", 0) if recent else 0
-    draw_icon_value(display, kudos_icon, (MARGIN + left_w - 62, content_y), 22, str(int(kudos)), BLACK, fontsize = 14)
+    if recent:
+        kudos_icon = load_icon(pal_img, "Kudos.bmp")
+        kudos = recent[0].get("kudos_count", 0)
+        draw_icon_value(display, kudos_icon, (MARGIN + left_w - 62, content_y), 22, str(int(kudos)), BLACK, fontsize = 14)
 
 
 
@@ -607,11 +615,18 @@ def make_gui(data : dict) -> Image.Image:
 
     last_act = recent[0] if recent else {}
     avg_speed = last_act.get("average_speed_kmh")
-    stat_chips = [
-        ("speed.jpg", f"{avg_speed:.1f} km/h" if avg_speed is not None else "-"),
-        ("ascent_icon.jpg", f"{last_act.get('elevation_gain_m', 0)} m"),
-        ("distance_icon.jpeg", f"{last_act.get('distance_km', 0):.1f} km"),
-    ]
+    if recent:
+        stat_chips = [
+            ("speed.jpg", f"{avg_speed:.1f} km/h" if avg_speed is not None else "-"),
+            ("ascent_icon.jpg", f"{last_act.get('elevation_gain_m', 0)} m"),
+            ("distance_icon.jpeg", f"{last_act.get('distance_km', 0):.1f} km"),
+        ]
+    else:
+        stat_chips = [
+            ("speed.jpg", "-"),
+            ("ascent_icon.jpg", "-"),
+            ("distance_icon.jpeg", "-"),
+        ]
 
     icon_h = 34
     col_w = left_w / len(stat_chips)
