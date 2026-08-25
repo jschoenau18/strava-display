@@ -245,6 +245,25 @@ python3 --version
       git clone git@github.com:jschoenau18/strava-display.git ~/strava-api-display
     ```
 
+    `strava-update.service` setzt dieses `GIT_SSH_COMMAND` selbst (siehe
+    [Automatisches Deployment neuer Releases](#automatisches-deployment-neuer-releases)),
+    ein manuelles `git pull`/`git fetch` im SSH-Terminal kennt den Deploy-Key
+    aber nicht und scheitert mit `Permission denied (publickey)`. Für
+    manuelle Git-Befehle entweder das `GIT_SSH_COMMAND` jedes Mal voranstellen,
+    oder – da dieser Pi ohnehin keinen anderen GitHub-Zugriff braucht – den
+    Deploy-Key einmalig als Standard für `github.com` hinterlegen:
+
+    ```sh
+    cat >> ~/.ssh/config <<'CFG'
+    Host github.com
+        HostName github.com
+        User git
+        IdentityFile ~/.ssh/strava_display_deploy
+        IdentitiesOnly yes
+    CFG
+    chmod 600 ~/.ssh/config
+    ```
+
 4. Virtuelle Umgebung anlegen und Abhängigkeiten installieren (`spidev`/`RPi.GPIO`
    kompilieren ggf. aus dem Quellcode, dafür vorher `build-essential`/`python3-dev`
    installieren, falls das fehlschlägt):
