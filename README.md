@@ -14,6 +14,7 @@ es nur als PNG, falls kein Display angeschlossen ist).
   - [Raspberry Pi im lokalen Netz finden und per SSH verbinden](#raspberry-pi-im-lokalen-netz-finden-und-per-ssh-verbinden)
     - [Automatisches Update alle 10 Minuten](#automatisches-update-alle-10-minuten)
     - [Automatisches Deployment neuer Releases](#automatisches-deployment-neuer-releases)
+    - [Manuelle Git-Befehle auf dem Pi](#manuelle-git-befehle-auf-dem-pi)
 - [Lokal testen](#lokal-testen-ohne-display)
 - [Modulreferenz](#modulreferenz)
   - [`main.py`](#mainpy)
@@ -245,24 +246,8 @@ python3 --version
       git clone git@github.com:jschoenau18/strava-display.git ~/strava-api-display
     ```
 
-    `strava-update.service` setzt dieses `GIT_SSH_COMMAND` selbst (siehe
-    [Automatisches Deployment neuer Releases](#automatisches-deployment-neuer-releases)),
-    ein manuelles `git pull`/`git fetch` im SSH-Terminal kennt den Deploy-Key
-    aber nicht und scheitert mit `Permission denied (publickey)`. Für
-    manuelle Git-Befehle entweder das `GIT_SSH_COMMAND` jedes Mal voranstellen,
-    oder – da dieser Pi ohnehin keinen anderen GitHub-Zugriff braucht – den
-    Deploy-Key einmalig als Standard für `github.com` hinterlegen:
-
-    ```sh
-    cat >> ~/.ssh/config <<'CFG'
-    Host github.com
-        HostName github.com
-        User git
-        IdentityFile ~/.ssh/strava_display_deploy
-        IdentitiesOnly yes
-    CFG
-    chmod 600 ~/.ssh/config
-    ```
+    Ein interaktives `git pull` im SSH-Terminal kennt diesen Deploy-Key aber
+    nicht automatisch – siehe [Manuelle Git-Befehle auf dem Pi](#manuelle-git-befehle-auf-dem-pi).
 
 4. Virtuelle Umgebung anlegen und Abhängigkeiten installieren (`spidev`/`RPi.GPIO`
    kompilieren ggf. aus dem Quellcode, dafür vorher `build-essential`/`python3-dev`
@@ -415,6 +400,51 @@ geklont, dann direkt weiter mit Schritt 2.
     `/etc/systemd/system/` – das bleibt ein manueller Schritt wie in
     [Automatisches Update alle 10 Minuten](#automatisches-update-alle-10-minuten)
     beschrieben, damit Systemd-Units nicht unbeaufsichtigt verändert werden.
+
+### Manuelle Git-Befehle auf dem Pi
+
+`strava-update.service` bekommt den Deploy-Key über `Environment=GIT_SSH_COMMAND=...`
+explizit gesetzt (siehe [`deploy/strava-update.service`](deploy/strava-update.service)).
+Ein interaktives `git pull`/`git fetch`/`git clone` im SSH-Terminal kennt
+diese Umgebungsvariable nicht und scheitert mit:
+
+```text
+git@github.com: Permission denied (publickey).
+```
+
+Zwei Möglichkeiten, das zu umgehen:
+
+**Pro Befehl** das `GIT_SSH_COMMAND` voranstellen:
+
+```sh
+GIT_SSH_COMMAND="ssh -i ~/.ssh/strava_display_deploy -o IdentitiesOnly=yes" git pull
+```
+
+**Dauerhaft** (empfohlen – dieser Pi braucht ohnehin keinen anderen
+GitHub-Zugriff): den Deploy-Key einmalig als Standard-Identity für
+`github.com` hinterlegen, danach funktionieren `git pull`, `git fetch`,
+`git log`, etc. ohne Präfix:
+
+```sh
+cat >> ~/.ssh/config <<'CFG'
+Host github.com
+    HostName github.com
+    User git
+    IdentityFile ~/.ssh/strava_display_deploy
+    IdentitiesOnly yes
+CFG
+chmod 600 ~/.ssh/config
+```
+
+Nach einem manuellen `git pull` läuft das Dashboard nicht automatisch neu –
+dafür entweder bis zu 10 Minuten auf `strava-dashboard.timer` warten oder
+sofort selbst anstoßen (über denselben `flock`-Lock wie die Timer, siehe
+[Automatisches Update alle 10 Minuten](#automatisches-update-alle-10-minuten)):
+
+```sh
+GPIOZERO_PIN_FACTORY=lgpio PYTHONPATH=~/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib \
+  flock -w 60 ~/strava-api-display/.dashboard.lock ~/strava-api-display/.venv/bin/python main.py
+```
 
 ## Lokal testen (ohne Display)
 
