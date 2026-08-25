@@ -851,6 +851,14 @@ def make_gui(data : dict) -> Image.Image:
 
     draw_weekly_distance_chart(display, pal_img, (right_x, y), (right_w, block_h), data.get("weekly_cycling_distance") or [])
 
+    # VERSIONS-LABEL UNTEN LINKS, IM RAND UNTER DEM INHALTSBEREICH
+    release_label = data.get("release_label") or "v?.?.?"
+    release_font = _select_font(10, False, True)
+    max_label_w = display.size[0] - 2 * MARGIN
+    while release_font.getlength(release_label) > max_label_w and len(release_label) > 1:
+        release_label = release_label[:-2] + "…"
+    display.draw.text((MARGIN, display.size[1] - MARGIN / 2), release_label, fill = BLACK, font = release_font, anchor = "lm")
+
     return display.image
 
 def render_dashboard(data : dict, output_path : str | None = None) -> Image.Image:

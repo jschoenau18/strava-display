@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly check for a new Strava Dashboard release
+
+[Timer]
+OnCalendar=*-*-* 03:00:00
+RandomizedDelaySec=10min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

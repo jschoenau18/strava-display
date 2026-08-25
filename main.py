@@ -3,6 +3,7 @@ from dotenv import load_dotenv
 import os
 import time
 from backend.api_reader import api_setup, refresh_api_access, get_dashboard_data
+from backend.version import get_release_label
 from display.display import render_dashboard
 from display.eink import update_display_from_file
 
@@ -39,6 +40,7 @@ if __name__ == "__main__":
                               token_expires = int(str(os.getenv("STRAVA_EXPIRES_AT"))))
 
     dashboard_data = get_dashboard_data(client)
+    dashboard_data["release_label"] = get_release_label()
 
     os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok = True)
     render_dashboard(dashboard_data, output_path = OUTPUT_PATH)

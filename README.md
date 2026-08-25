@@ -13,11 +13,13 @@ es nur als PNG, falls kein Display angeschlossen ist).
 - [Hardware-Setup](#hardware-setup)
   - [Raspberry Pi im lokalen Netz finden und per SSH verbinden](#raspberry-pi-im-lokalen-netz-finden-und-per-ssh-verbinden)
     - [Automatisches Update alle 10 Minuten](#automatisches-update-alle-10-minuten)
+    - [Automatisches Deployment neuer Releases](#automatisches-deployment-neuer-releases)
 - [Lokal testen](#lokal-testen-ohne-display)
 - [Modulreferenz](#modulreferenz)
   - [`main.py`](#mainpy)
   - [`backend/api_reader.py`](#backendapi_readerpy)
     - [`backend/weather.py`](#backendweatherpy)
+  - [`backend/version.py`](#backendversionpy)
   - [`display/display.py`](#displaydisplaypy)
   - [`display/eink.py`](#displayeinkpy)
 - [Design-Hinweise: Farben auf der 6-Farb-Palette](#design-hinweise-farben-auf-der-6-farb-palette)
@@ -133,13 +135,14 @@ strava-api-display/
 ├── main.py                  # Einstiegspunkt / Orchestrierung
 ├── backend/
 │   ├── api_reader.py        # Strava-Auth + Datenabruf
-│   └── weather.py            # Pi-Standort + Wetterdaten
+│   ├── weather.py            # Pi-Standort + Wetterdaten
+│   └── version.py            # Release-Label aus dem lokalen Git-Tag
 ├── display/
 │   ├── display.py           # Bild-Rendering (PIL) für die 6-Farb-Palette
 │   ├── eink.py               # Waveshare-Treiber-Wrapper
 │   ├── fonts/                # Roboto (+ Condensed), Regular/Bold
 │   └── img/                  # Logo und Statistik-Icons
-├── deploy/                   # systemd-Unit-Vorlagen für den 10-min-Timer
+├── deploy/                   # systemd-Units für 10-min-Timer + nächtliches Release-Update
 ├── output/                   # render_dashboard()-Ausgabe (gitignored)
 ├── .env                       # Strava-Credentials/Tokens (gitignored)
 └── requirements.txt
@@ -297,6 +300,72 @@ gewünscht ist:
 */10 * * * * cd /home/jschoenau/strava-api-display && PYTHONPATH=/home/jschoenau/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib .venv/bin/python main.py >> /home/jschoenau/strava-api-display/cron.log 2>&1
 ```
 
+### Automatisches Deployment neuer Releases
+
+Statt Änderungen manuell per `rsync` auf den Pi zu kopieren, kann der Pi
+nachts selbstständig prüfen, ob es einen neuen Git-Tag (`vX.Y.Z`) auf
+`origin` gibt, und diesen per SSH-Deploy-Key selbst pullen. Der Deploy-Key
+hat nur Lesezugriff auf genau dieses Repo – kein Zugriff auf den restlichen
+GitHub-Account.
+
+1. **Deploy-Key auf dem Pi erzeugen** (eigener Schlüssel, getrennt vom
+   persönlichen SSH-Key):
+
+    ```sh
+    ssh-keygen -t ed25519 -C "strava-display-deploy" -f ~/.ssh/strava_display_deploy -N ""
+    cat ~/.ssh/strava_display_deploy.pub
+    ```
+
+2. Den öffentlichen Schlüssel in GitHub unter
+   **Repo → Settings → Deploy keys → Add deploy key** eintragen.
+   *"Allow write access"* **nicht** aktivieren – der Pi soll nur lesen.
+
+3. **Von `rsync`-Kopie auf echten Git-Checkout umstellen** (einmalig, falls
+   das Verzeichnis auf dem Pi noch kein Git-Repo ist):
+
+    ```sh
+    cd ~
+    mv strava-api-display strava-api-display.bak   # alte Kopie sichern
+    GIT_SSH_COMMAND="ssh -i ~/.ssh/strava_display_deploy -o IdentitiesOnly=yes" \
+      git clone git@github.com:jschoenau18/strava-display.git strava-api-display
+    cp strava-api-display.bak/.env strava-api-display/.env
+    cp -r strava-api-display.bak/.venv strava-api-display/.venv   # oder .venv neu anlegen, siehe oben
+    rm -rf strava-api-display.bak
+    ```
+
+4. **Update-Skript und Timer installieren:**
+
+    ```sh
+    cd ~/strava-api-display
+    sudo cp deploy/strava-update.service deploy/strava-update.timer /etc/systemd/system/
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now strava-update.timer
+    ```
+
+    [`deploy/update.sh`](deploy/update.sh) holt nachts um 03:00 Uhr
+    (`OnCalendar` in [`deploy/strava-update.timer`](deploy/strava-update.timer),
+    ±10 min Zufallsverzögerung) per `git fetch --tags` die Tags von `origin`,
+    ermittelt per Versionssortierung den neuesten `v*`-Tag und checkt ihn nur
+    aus, wenn er vom aktuell ausgecheckten Tag abweicht. Danach werden die
+    `requirements.txt`-Abhängigkeiten neu installiert. Da `.env` und `output/`
+    per `.gitignore` nicht versioniert sind, bleiben Tokens und gerenderte
+    Bilder beim Checkout unberührt.
+
+5. **Prüfen:**
+
+    ```sh
+    systemctl list-timers strava-update.timer     # nächste geplante Prüfung
+    sudo systemctl start strava-update.service     # sofort testen
+    journalctl -u strava-update.service -f         # Logs live verfolgen
+    ```
+
+    Ändern sich in einem neuen Release die Unit-Dateien in `deploy/` selbst
+    (z. B. ein neues `strava-dashboard.timer`-Intervall), kopiert das
+    Update-Skript diese bewusst **nicht** automatisch nach
+    `/etc/systemd/system/` – das bleibt ein manueller Schritt wie in
+    [Automatisches Update alle 10 Minuten](#automatisches-update-alle-10-minuten)
+    beschrieben, damit Systemd-Units nicht unbeaufsichtigt verändert werden.
+
 ## Lokal testen (ohne Display)
 
 Ohne `STRAVA_UPDATE_DISPLAY=1` schreibt das Programm nur `output/dashboard.png` –
@@ -332,8 +401,9 @@ Kein importierbares Modul, sondern das ausführbare Skript. Ablauf beim Start
 2. Falls kein Token vorhanden: `api_setup()` (interaktiver OAuth-Flow).
 3. Falls Token abgelaufen: `refresh_api_access()`.
 4. `get_dashboard_data(client)` aufrufen.
-5. `render_dashboard(data, output_path=OUTPUT_PATH)` aufrufen → schreibt `output/dashboard.png`.
-6. Falls `STRAVA_UPDATE_DISPLAY=1`: `update_display_from_file(OUTPUT_PATH)` aufrufen.
+5. `dashboard_data["release_label"] = get_release_label()` setzen (siehe [`backend/version.py`](#backendversionpy)).
+6. `render_dashboard(data, output_path=OUTPUT_PATH)` aufrufen → schreibt `output/dashboard.png`.
+7. Falls `STRAVA_UPDATE_DISPLAY=1`: `update_display_from_file(OUTPUT_PATH)` aufrufen.
 
 ---
 
@@ -427,6 +497,17 @@ Lädt über Open-Meteo Temperatur, Wind und die Niederschlagswahrscheinlichkeit
 für die nächsten 30 Minuten. Die Standortreihenfolge ist: Koordinaten aus
 `WEATHER_LATITUDE`/`WEATHER_LONGITUDE`, 24-Stunden-IP-Cache, letzter GPS-Punkt
 der Route.
+
+### `backend/version.py`
+
+#### `get_release_label() -> str`
+
+Liefert den Namen des aktuell ausgecheckten Releases fürs Versions-Label
+unten links im Dashboard: der neueste Git-Tag (`git describe --tags
+--abbrev=0`), z. B. `"v0.2.0"`. Läuft `main.py` außerhalb eines
+Git-Checkouts oder gibt es gar keine Tags, ist das Ergebnis `"v?.?.?"`.
+Siehe [Automatisches Deployment neuer Releases](#automatisches-deployment-neuer-releases)
+für den Hintergrund zu den Release-Tags.
 
 ### `display/display.py`
 
@@ -557,6 +638,9 @@ Aktivitäts-Titel, Stat-Chips, Leistungs-Chips, Routen-Karte und
 Höhenprofil links; Jahres-Distanz, Höhenmeter, Bestleistungen rechts)
 aus dem `data`-Dict (Format siehe
 [`get_dashboard_data()`](#get_dashboard_dataclient-stravalibclient-n_recent-int--1---dict)).
+Zeichnet außerdem `data["release_label"]` (siehe
+[`backend/version.py`](#backendversionpy)) klein unten links in den Rand;
+zu lange Labels werden auf die verfügbare Breite gekürzt (`…`-Suffix).
 
 #### `render_dashboard(data: dict, output_path: str | None = None) -> Image`
 

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check for a new Strava Dashboard release and pull it
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=jschoenau
+WorkingDirectory=/home/jschoenau/strava-api-display
+Environment=GIT_SSH_COMMAND=ssh -i /home/jschoenau/.ssh/strava_display_deploy -o IdentitiesOnly=yes
+ExecStart=/home/jschoenau/strava-api-display/deploy/update.sh
