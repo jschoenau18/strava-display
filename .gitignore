@@ -2,3 +2,4 @@
 __pycache__/
 display/img/mockup.png
 output/
+.dashboard.lock

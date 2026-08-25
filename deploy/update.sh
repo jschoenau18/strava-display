@@ -11,7 +11,11 @@ EPAPER_PYTHONPATH="/home/jschoenau/e-Paper/E-paper_Separate_Program/4inch_e-Pape
 cd "$REPO_DIR"
 
 run_dashboard() {
-    GPIOZERO_PIN_FACTORY=lgpio PYTHONPATH="$EPAPER_PYTHONPATH" "$REPO_DIR/.venv/bin/python" main.py
+    # flock serializes against strava-dashboard.timer / other concurrent runs -
+    # both touch the same e-paper GPIO pins, and a second process claiming an
+    # already-held pin crashes with "lgpio.error: 'GPIO busy'" instead of waiting.
+    GPIOZERO_PIN_FACTORY=lgpio PYTHONPATH="$EPAPER_PYTHONPATH" \
+        flock -w 60 "$REPO_DIR/.dashboard.lock" "$REPO_DIR/.venv/bin/python" main.py
 }
 
 rollback_to() {

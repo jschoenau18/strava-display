@@ -195,13 +195,10 @@ nmap -sn 192.168.1.0/24      # aktive Geräte im eigenen Netz anzeigen
 nmap -p 22 --open 192.168.1.0/24
 ```
 
-Die gefundene IP-Adresse anschließend für die SSH-Verbindung und beim
-`rsync`-Aufruf verwenden:
+Die gefundene IP-Adresse anschließend für die SSH-Verbindung verwenden:
 
 ```sh
 ssh <pi-user>@<pi-ip>
-rsync -avz --exclude='.venv' --exclude='__pycache__' --exclude='.git' --exclude='output' \
-    ./ <pi-user>@<pi-ip>:~/strava-api-display/
 ```
 
 Beim ersten Verbindungsaufbau den Host-Schlüssel mit `yes` bestätigen und das
@@ -228,11 +225,24 @@ python3 --version
 
     (Wird unten per `PYTHONPATH` eingebunden statt separat installiert, siehe Service-Unit.)
 
-3. Projekt auf den Pi kopieren, z. B. per `rsync` von deinem Rechner aus:
+3. **Projekt per Git auf den Pi klonen** (statt per `rsync` zu kopieren – so
+   bekommt der Pi von Anfang an einen echten Checkout, den er später auch
+   selbst per Deploy-Key aktualisieren kann, siehe
+   [Automatisches Deployment neuer Releases](#automatisches-deployment-neuer-releases)):
 
     ```sh
-    rsync -avz --exclude='.venv' --exclude='__pycache__' --exclude='.git' --exclude='output' \
-      ./ <pi-user>@<pi-host>:~/strava-api-display/
+    ssh-keygen -t ed25519 -C "strava-display-deploy" -f ~/.ssh/strava_display_deploy -N ""
+    cat ~/.ssh/strava_display_deploy.pub
+    ```
+
+    Den ausgegebenen öffentlichen Schlüssel in GitHub unter
+    **Repo → Settings → Deploy keys → Add deploy key** eintragen
+    (*"Allow write access"* **nicht** aktivieren – der Pi soll nur lesen).
+    Danach klonen:
+
+    ```sh
+    GIT_SSH_COMMAND="ssh -i ~/.ssh/strava_display_deploy -o IdentitiesOnly=yes" \
+      git clone git@github.com:jschoenau18/strava-display.git ~/strava-api-display
     ```
 
 4. Virtuelle Umgebung anlegen und Abhängigkeiten installieren (`spidev`/`RPi.GPIO`
@@ -256,12 +266,22 @@ python3 --version
     darauf umstellen (siehe Testlauf und Service-Unit unten).
 
 5. `.env` mit den Strava-Zugangsdaten (und – falls schon lokal verbunden – den
-   bereits gültigen Tokens) ins Projektverzeichnis kopieren, `STRAVA_UPDATE_DISPLAY=1` setzen.
+   bereits gültigen Tokens) ins Projektverzeichnis kopieren (z. B. per
+   `scp .env <pi-user>@<pi-host>:~/strava-api-display/.env` – `.env` ist
+   gitignored und kommt daher nicht über den Git-Clone mit),
+   `STRAVA_UPDATE_DISPLAY=1` setzen.
 6. Testlauf:
 
     ```sh
-    GPIOZERO_PIN_FACTORY=lgpio PYTHONPATH=~/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib .venv/bin/python main.py
+    GPIOZERO_PIN_FACTORY=lgpio PYTHONPATH=~/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib flock -w 60 ~/strava-api-display/.dashboard.lock .venv/bin/python main.py
     ```
+
+    Das `flock` ist kein Zufall: Sobald der Timer unten läuft, feuert er alle
+    10 Minuten `main.py` im Hintergrund. Ein manueller Testlauf zur gleichen
+    Zeit greift sonst auf dieselben E-Paper-GPIO-Pins zu wie der laufende
+    Timer-Job und crasht mit `lgpio.error: 'GPIO busy'` – `flock` sorgt
+    dafür, dass sich beide Läufe die Pins nacheinander statt gleichzeitig
+    teilen (siehe [Automatisches Update alle 10 Minuten](#automatisches-update-alle-10-minuten)).
 
     Kein `.env` mit gültigen Tokens dabei? Dann läuft hier interaktiv der
     OAuth-Flow von `api_setup()` (Browser-Login, Code ins SSH-Terminal einfügen).
@@ -276,7 +296,12 @@ Die Unit-Dateien in [`deploy/`](deploy/) richten einen systemd-Timer ein, der
    und der Waveshare-Bibliothek unter `~/e-Paper` aus (inkl. der
    `Environment=PYTHONPATH=...`-Zeile sowie `Environment=GPIOZERO_PIN_FACTORY=lgpio`,
    siehe [Raspberry Pi einrichten](#raspberry-pi-einrichten)) – bei abweichenden
-   Pfaden entsprechend anpassen.
+   Pfaden entsprechend anpassen. `ExecStart` läuft über `flock -w 60
+   .dashboard.lock`, damit sich dieser Timer-Job nicht mit einem manuellen
+   Testlauf oder dem nächtlichen Update-Skript (siehe
+   [Automatisches Deployment neuer Releases](#automatisches-deployment-neuer-releases))
+   um dieselben E-Paper-GPIO-Pins streitet – ohne Lock crasht der zweite
+   gleichzeitige Zugriff mit `lgpio.error: 'GPIO busy'`, statt einfach zu warten.
 2. Beide Dateien nach `/etc/systemd/system/` kopieren:
 
     ```sh
@@ -297,43 +322,34 @@ Alternativ genügt auch ein Cron-Eintrag (`crontab -e`), falls kein systemd
 gewünscht ist:
 
 ```cron
-*/10 * * * * cd /home/jschoenau/strava-api-display && PYTHONPATH=/home/jschoenau/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib .venv/bin/python main.py >> /home/jschoenau/strava-api-display/cron.log 2>&1
+*/10 * * * * cd /home/jschoenau/strava-api-display && PYTHONPATH=/home/jschoenau/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib flock -w 60 .dashboard.lock .venv/bin/python main.py >> /home/jschoenau/strava-api-display/cron.log 2>&1
 ```
 
 ### Automatisches Deployment neuer Releases
 
-Statt Änderungen manuell per `rsync` auf den Pi zu kopieren, kann der Pi
-nachts selbstständig prüfen, ob es einen neuen Git-Tag (`vX.Y.Z`) auf
-`origin` gibt, und diesen per SSH-Deploy-Key selbst pullen. Der Deploy-Key
-hat nur Lesezugriff auf genau dieses Repo – kein Zugriff auf den restlichen
-GitHub-Account.
+Der Pi kann nachts selbstständig prüfen, ob es einen neuen Git-Tag
+(`vX.Y.Z`) auf `origin` gibt, und diesen per SSH-Deploy-Key selbst pullen.
+Der Deploy-Key hat nur Lesezugriff auf genau dieses Repo – kein Zugriff auf
+den restlichen GitHub-Account. Bei einem neuen Pi ist das Repo laut
+[Raspberry Pi einrichten](#raspberry-pi-einrichten) schon per Git-Deploy-Key
+geklont, dann direkt weiter mit Schritt 2.
 
-1. **Deploy-Key auf dem Pi erzeugen** (eigener Schlüssel, getrennt vom
-   persönlichen SSH-Key):
-
-    ```sh
-    ssh-keygen -t ed25519 -C "strava-display-deploy" -f ~/.ssh/strava_display_deploy -N ""
-    cat ~/.ssh/strava_display_deploy.pub
-    ```
-
-2. Den öffentlichen Schlüssel in GitHub unter
-   **Repo → Settings → Deploy keys → Add deploy key** eintragen.
-   *"Allow write access"* **nicht** aktivieren – der Pi soll nur lesen.
-
-3. **Von `rsync`-Kopie auf echten Git-Checkout umstellen** (einmalig, falls
-   das Verzeichnis auf dem Pi noch kein Git-Repo ist):
+1. **Falls der Pi noch eine alte `rsync`-Kopie ohne `.git`-Verzeichnis hat**,
+   einmalig auf einen echten Checkout umstellen (Deploy-Key wie in
+   [Raspberry Pi einrichten](#raspberry-pi-einrichten) erzeugen und in
+   GitHub eintragen, falls noch nicht geschehen):
 
     ```sh
     cd ~
-    mv strava-api-display strava-api-display.bak   # alte Kopie sichern
+    mv strava-api-display strava-api-display.bak   # alte Kopie sichern, NICHT löschen
     GIT_SSH_COMMAND="ssh -i ~/.ssh/strava_display_deploy -o IdentitiesOnly=yes" \
       git clone git@github.com:jschoenau18/strava-display.git strava-api-display
     cp strava-api-display.bak/.env strava-api-display/.env
     cp -r strava-api-display.bak/.venv strava-api-display/.venv   # oder .venv neu anlegen, siehe oben
-    rm -rf strava-api-display.bak
+    rm -rf strava-api-display.bak   # erst jetzt, wenn beides sicher kopiert ist
     ```
 
-4. **Update-Skript und Timer installieren:**
+2. **Update-Skript und Timer installieren:**
 
     ```sh
     cd ~/strava-api-display
@@ -348,7 +364,10 @@ GitHub-Account.
     ermittelt per Versionssortierung den neuesten `v*`-Tag und checkt ihn nur
     aus, wenn er vom aktuell ausgecheckten Tag abweicht. Danach werden die
     `requirements.txt`-Abhängigkeiten neu installiert und `main.py` einmal
-    direkt ausgeführt – einerseits um das E-Paper-Display sofort auf den
+    direkt ausgeführt (über denselben `flock .dashboard.lock`-Lock wie
+    `strava-dashboard.timer`, siehe [Automatisches Update alle 10 Minuten](#automatisches-update-alle-10-minuten) –
+    verhindert `lgpio.error: 'GPIO busy'`, falls beide Timer sich zeitlich
+    überschneiden) – einerseits um das E-Paper-Display sofort auf den
     neuen Stand zu bringen (inkl. aktualisiertem Versions-Label), statt bis
     zu 10 Minuten auf den nächsten `strava-dashboard.timer`-Lauf zu warten,
     andererseits als **Verifikation**: schlägt dieser Lauf fehl (Absturz,
@@ -363,7 +382,7 @@ GitHub-Account.
     versioniert sind, bleiben Tokens und gerenderte Bilder bei alldem
     unberührt.
 
-5. **Prüfen:**
+3. **Prüfen:**
 
     ```sh
     systemctl list-timers strava-update.timer     # nächste geplante Prüfung
