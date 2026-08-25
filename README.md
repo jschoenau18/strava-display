@@ -348,11 +348,20 @@ GitHub-Account.
     ermittelt per Versionssortierung den neuesten `v*`-Tag und checkt ihn nur
     aus, wenn er vom aktuell ausgecheckten Tag abweicht. Danach werden die
     `requirements.txt`-Abhängigkeiten neu installiert und `main.py` einmal
-    direkt ausgeführt, damit das E-Paper-Display sofort den neuen Stand
-    zeigt (inkl. aktualisiertem Versions-Label), statt bis zu 10 Minuten auf
-    den nächsten `strava-dashboard.timer`-Lauf zu warten. Da `.env` und
-    `output/` per `.gitignore` nicht versioniert sind, bleiben Tokens und
-    gerenderte Bilder beim Checkout unberührt.
+    direkt ausgeführt – einerseits um das E-Paper-Display sofort auf den
+    neuen Stand zu bringen (inkl. aktualisiertem Versions-Label), statt bis
+    zu 10 Minuten auf den nächsten `strava-dashboard.timer`-Lauf zu warten,
+    andererseits als **Verifikation**: schlägt dieser Lauf fehl (Absturz,
+    fehlerhafter Import etc.), checkt das Skript automatisch den vorherigen
+    Tag wieder aus, installiert dessen Abhängigkeiten zurück und rendert
+    damit erneut – der Pi bleibt also nie auf einem kaputten Release hängen,
+    sondern fällt selbstständig auf den letzten funktionierenden Stand
+    zurück. In dem Fall beendet sich `strava-update.service` mit einem
+    Fehlercode (sichtbar in `journalctl`/`systemctl status`), auch wenn der
+    Rollback selbst geklappt hat – so bleibt sichtbar, dass ein Release
+    übersprungen wurde. Da `.env` und `output/` per `.gitignore` nicht
+    versioniert sind, bleiben Tokens und gerenderte Bilder bei alldem
+    unberührt.
 
 5. **Prüfen:**
 
