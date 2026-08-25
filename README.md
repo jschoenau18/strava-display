@@ -347,9 +347,12 @@ GitHub-Account.
     ±10 min Zufallsverzögerung) per `git fetch --tags` die Tags von `origin`,
     ermittelt per Versionssortierung den neuesten `v*`-Tag und checkt ihn nur
     aus, wenn er vom aktuell ausgecheckten Tag abweicht. Danach werden die
-    `requirements.txt`-Abhängigkeiten neu installiert. Da `.env` und `output/`
-    per `.gitignore` nicht versioniert sind, bleiben Tokens und gerenderte
-    Bilder beim Checkout unberührt.
+    `requirements.txt`-Abhängigkeiten neu installiert und `main.py` einmal
+    direkt ausgeführt, damit das E-Paper-Display sofort den neuen Stand
+    zeigt (inkl. aktualisiertem Versions-Label), statt bis zu 10 Minuten auf
+    den nächsten `strava-dashboard.timer`-Lauf zu warten. Da `.env` und
+    `output/` per `.gitignore` nicht versioniert sind, bleiben Tokens und
+    gerenderte Bilder beim Checkout unberührt.
 
 5. **Prüfen:**
 

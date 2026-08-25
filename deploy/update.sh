@@ -25,5 +25,9 @@ echo "New release found: ${current_tag} -> ${latest_tag}. Updating..."
 git checkout "$latest_tag"
 .venv/bin/pip install -r requirements.txt
 
-echo "Update complete, now at $latest_tag."
+echo "Update complete, now at $latest_tag. Triggering dashboard refresh..."
+GPIOZERO_PIN_FACTORY=lgpio \
+PYTHONPATH=/home/jschoenau/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib \
+"$REPO_DIR/.venv/bin/python" main.py
+
 echo "Note: if deploy/strava-dashboard.service or .timer changed in this release, re-copy them to /etc/systemd/system and run 'sudo systemctl daemon-reload' manually."
