@@ -155,24 +155,10 @@ def to_spectra6(img_rgba : Image.Image, pal_img : Image.Image, transparent_index
 def image_cleanup(image : Image.Image) -> Image.Image:
 
     img = image.convert("RGBA")
-    img_data = img.getdata()
-    new_data = []
+    r, g, b, a = img.split()
+    a = a.point(lambda v: 0 if v < 20 else 255)
 
-    for pix in img_data:
-
-        r, g, b, a = pix
-
-        if a < 20:
-
-            new_data.append((0,0,0,0))
-
-        else:
-
-            new_data.append((r,g,b,255))
-
-    img.putdata(new_data)
-
-    return img
+    return Image.merge("RGBA", (r, g, b, a))
 
 def get_palette_image() -> Image.Image:
 
