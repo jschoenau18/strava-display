@@ -1,5 +1,8 @@
 # Strava E-Paper Dashboard
 
+![GitHub release](https://img.shields.io/github/v/release/jschoenau18/strava-display)
+![GitHub tag](https://img.shields.io/github/v/tag/jschoenau18/strava-display)
+
 Rendert die letzte Strava-Aktivität und die Jahresstatistik als 600×400px-Bild
 und zeigt es auf einem Waveshare Spectra-6-E-Paper-Display an (oder speichert
 es nur als PNG, falls kein Display angeschlossen ist).
