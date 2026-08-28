@@ -30,7 +30,10 @@ if ! git fetch --tags --prune origin; then
 fi
 
 previous_tag="$(git describe --tags --abbrev=0 2>/dev/null || true)"
-latest_tag="$(git tag --list 'v*' --sort=-v:refname | head -n1)"
+# Only real releases (vX.Y.Z) are auto-pulled - tags with a suffix like
+# "-pre" (e.g. v1.2.0-pre) are pre-releases for manual testing and must
+# never be picked up automatically.
+latest_tag="$(git tag --list 'v*' --sort=-v:refname | grep -E '^v[0-9]+\.[0-9]+\.[0-9]+$' | head -n1)"
 
 if [[ -z "$latest_tag" ]]; then
     echo "No version tags found on origin, nothing to do."
