@@ -1062,10 +1062,10 @@ def draw_page1(display : Display,
 
     # AKTIVITÄTS-ICON LINKS VOM TITEL, TITEL WIRD BEI PLATZMANGEL MIT "..." ABGESCHNITTEN
     title_icon = load_icon(pal_img, _activity_icon_filename(sport_type))
-    title_icon_h = LABEL_H - 8
+    title_icon_h = LABEL_H + 6
     title_icon_w = int(title_icon_h * title_icon.width / title_icon.height)
     title_icon_x = MARGIN + 4
-    title_icon_y = content_y + (LABEL_H - title_icon_h) // 2
+    title_icon_y = int(content_y + (LABEL_H - title_icon_h) / 2)
     title_icon_resized = title_icon.resize((title_icon_w, title_icon_h))
     paste_with_transparency(display.image, title_icon_resized, (title_icon_x, title_icon_y))
 
