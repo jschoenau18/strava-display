@@ -237,6 +237,31 @@ def draw_icon_value(display : Display,
     text_y = y + icon_h / 2
     display.draw.text((text_x, text_y), text, fill = text_color, font = font, anchor = "lm")
 
+HEART_ICON_KEY = "__heart__"
+
+def make_heart_icon(pal_img : Image.Image, size : int = 64, fill : tuple[int, int, int, int] = (0, 0, 0, 255)) -> Image.Image:
+
+    """
+    Draws a small filled heart (two overlapping circles + a triangle,
+    the classic construction) on a transparent square canvas, quantized
+    to the e-ink palette - used for the average-heart-rate stat chip
+    since there's no heart icon image asset.
+    """
+
+    overlay = Image.new("RGBA", (size, size), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+
+    r = size * 0.28
+    cx1 = size * 0.28
+    cx2 = size * 0.72
+    cy = size * 0.30
+
+    draw.ellipse((cx1 - r, cy - r, cx1 + r, cy + r), fill = fill)
+    draw.ellipse((cx2 - r, cy - r, cx2 + r, cy + r), fill = fill)
+    draw.polygon([(size * 0.02, cy), (size * 0.98, cy), (size / 2, size * 0.98)], fill = fill)
+
+    return to_spectra6(overlay, pal_img)
+
 def draw_weather_icon(display : Display, anchor : tuple[int, int], state : str, size : int = 22) -> None:
 
     draw = display.draw
@@ -779,6 +804,22 @@ def draw_page_indicator(display : Display,
     quantized = to_spectra6(overlay, pal_img)
     paste_with_transparency(display.image, quantized, (int(center[0] - width / 2), int(center[1] - height / 2)))
 
+def _truncate_to_width(text : str, font : ImageFont.FreeTypeFont, max_width : float, ellipsis : str = "...") -> str:
+
+    """
+    Shortens text so it (plus the ellipsis) fits within max_width,
+    trimming one character at a time. Returns text unchanged if it
+    already fits.
+    """
+
+    if font.getlength(text) <= max_width:
+        return text
+
+    while text and font.getlength(text + ellipsis) > max_width:
+        text = text[:-1]
+
+    return (text + ellipsis) if text else ellipsis
+
 def format_duration(minutes : float) -> str:
 
     total_minutes = int(round(minutes))
@@ -910,6 +951,12 @@ def make_gui(data : dict, page : int = 1, total_pages : int = TOTAL_PAGES) -> Im
     content_y = HEADER_H + GAP
     content_h = display.size[1] - content_y - MARGIN
 
+    # SEITEN-INDIKATOR RICHTET SICH AUF BEIDEN SEITEN NACH DER GLEICHEN
+    # HÖHE AUS - DEM UNTEREN RAND DER HÖHENGRAFIK AUF SEITE 1 (AUCH WENN
+    # DIESE AUF SEITE 2 GAR NICHT GEZEICHNET WIRD).
+    elevation_bottom = _page1_layout_metrics(data, content_y, content_h, LABEL_H, GAP)["elevation_bottom"]
+    indicator_y = (elevation_bottom + display.size[1]) / 2
+
     if page == 2:
         draw_page2(display, pal_img, data, content_y, content_h, MARGIN, GAP, LABEL_H)
     else:
@@ -925,9 +972,65 @@ def make_gui(data : dict, page : int = 1, total_pages : int = TOTAL_PAGES) -> Im
 
     # SEITEN-INDIKATOR, MITTIG UNTEN, ETWAS ÜBER DER VERSIONS-ZEILE - NUR BEI MEHR ALS EINER SEITE
     if total_pages > 1:
-        draw_page_indicator(display, pal_img, (display.size[0] / 2, display.size[1] - MARGIN - 6), current_page = page - 1, total_pages = total_pages)
+        draw_page_indicator(display, pal_img, (display.size[0] / 2, indicator_y), current_page = page - 1, total_pages = total_pages)
 
     return display.image
+
+def _page1_layout_metrics(data : dict, content_y : int, content_h : int, LABEL_H : int, GAP : int) -> dict:
+
+    """
+    Pure layout geometry (no drawing) for page 1's info-box/power-chips/
+    map/elevation stack. Shared by draw_page1 (which uses it to actually
+    place everything) and make_gui (which just needs elevation_bottom to
+    align the page indicator on page 2 the same way as on page 1).
+    """
+
+    recent = data.get("recent_activities") or []
+    last_act = recent[0] if recent else {}
+    sport_type = last_act.get("sport_type") if recent else None
+    is_run = "Run" in (sport_type or "")
+
+    rows_y = content_y + LABEL_H + GAP // 2
+    rows_h = content_h - LABEL_H - GAP // 2
+
+    INFO_BOX_H = 40
+    row_gap = 6
+    chip_gap = 0
+    power_box_h = 40
+    power_box_y = rows_y + INFO_BOX_H + chip_gap
+    power_metrics = data.get("power_metrics") or {}
+    show_power = bool(recent) and not is_run and any(v is not None for v in power_metrics.values())
+
+    if show_power:
+        maps_y = power_box_y + power_box_h + row_gap
+        maps_h = rows_h - INFO_BOX_H - power_box_h - chip_gap - 2 * row_gap
+    else:
+        maps_y = rows_y + INFO_BOX_H + row_gap
+        maps_h = rows_h - INFO_BOX_H - row_gap
+
+    ELEVATION_PROFILE_H = 69
+    elevation_h = ELEVATION_PROFILE_H
+    route_map_h = maps_h - elevation_h - row_gap
+    elevation_y = maps_y + route_map_h + row_gap
+
+    return {
+        "recent": recent,
+        "last_act": last_act,
+        "is_run": is_run,
+        "rows_y": rows_y,
+        "rows_h": rows_h,
+        "INFO_BOX_H": INFO_BOX_H,
+        "row_gap": row_gap,
+        "power_box_y": power_box_y,
+        "power_box_h": power_box_h,
+        "power_metrics": power_metrics,
+        "show_power": show_power,
+        "maps_y": maps_y,
+        "route_map_h": route_map_h,
+        "elevation_y": elevation_y,
+        "elevation_h": elevation_h,
+        "elevation_bottom": elevation_y + elevation_h,
+    }
 
 def draw_page1(display : Display,
                 pal_img : Image.Image,
@@ -936,20 +1039,43 @@ def draw_page1(display : Display,
                 content_h : int,
                 MARGIN : int,
                 GAP : int,
-                LABEL_H : int) -> None:
+                LABEL_H : int) -> float:
+
+    """
+    Returns the y-coordinate of the bottom edge of the elevation-profile
+    graphic, so the caller can position the page indicator relative to it.
+    """
 
     left_w = int((display.size[0] - 2 * MARGIN - GAP) * 0.58)
     right_x = MARGIN + left_w + GAP
     right_w = display.size[0] - MARGIN - right_x
 
-    # LEFT COLUMN: RECENT ACTIVITIES
-    recent = data.get("recent_activities") or []
-    last_act_name : str = recent[0].get("name", "-") if recent else "Keine Aktivität"
+    layout = _page1_layout_metrics(data, content_y, content_h, LABEL_H, GAP)
+    recent = layout["recent"]
+    last_act = layout["last_act"]
+    is_run = layout["is_run"]
+    last_act_name : str = last_act.get("name", "-") if recent else "Keine Aktivität"
+    sport_type = last_act.get("sport_type") if recent else None
+
     left_label = GUIBox((left_w, LABEL_H), (MARGIN, content_y), WHITE)
-
-    left_label.add_text(last_act_name, (0.5, 0.5), BLACK, fontsize = 20, bold = True, anchor = "mm")
-
     left_label.draw_box(display.draw)
+
+    # AKTIVITÄTS-ICON LINKS VOM TITEL, TITEL WIRD BEI PLATZMANGEL MIT "..." ABGESCHNITTEN
+    title_icon = load_icon(pal_img, _activity_icon_filename(sport_type))
+    title_icon_h = LABEL_H - 8
+    title_icon_w = int(title_icon_h * title_icon.width / title_icon.height)
+    title_icon_x = MARGIN + 4
+    title_icon_y = content_y + (LABEL_H - title_icon_h) // 2
+    title_icon_resized = title_icon.resize((title_icon_w, title_icon_h))
+    paste_with_transparency(display.image, title_icon_resized, (title_icon_x, title_icon_y))
+
+    KUDOS_RESERVED_W = 66
+    title_text_x0 = title_icon_x + title_icon_w + 8
+    title_text_x1 = MARGIN + left_w - (KUDOS_RESERVED_W if recent else 6)
+    title_font = _select_font(20, True, False)
+    title_text = _truncate_to_width(last_act_name, title_font, title_text_x1 - title_text_x0)
+    display.draw.text((title_text_x0, content_y + LABEL_H / 2), title_text, fill = BLACK, font = title_font, anchor = "lm")
+
     if recent:
         kudos_icon = load_icon(pal_img, "Kudos.bmp")
         kudos = recent[0].get("kudos_count", 0)
@@ -957,69 +1083,74 @@ def draw_page1(display : Display,
 
 
 
-    rows_y = content_y + LABEL_H + GAP // 2
-    rows_h = content_h - LABEL_H - GAP // 2
+    rows_y = layout["rows_y"]
 
     # INFO-BOX MIT DEN KENNZAHLEN DER LETZTEN AKTIVITÄT (GESCHWINDIGKEIT, HÖHENMETER, DISTANZ)
-    INFO_BOX_H = 40
+    INFO_BOX_H = layout["INFO_BOX_H"]
     info_box = GUIBox((left_w, INFO_BOX_H), (MARGIN, rows_y), WHITE)
     info_box.draw_box(display.draw)
 
-    last_act = recent[0] if recent else {}
     avg_speed = last_act.get("average_speed_kmh")
-    if recent:
-        stat_chips = [
-            ("speed.jpg", f"{avg_speed:.1f} km/h" if avg_speed is not None else "-"),
-            ("ascent_icon.jpg", f"{last_act.get('elevation_gain_m', 0)} m"),
-            ("distance_icon.jpeg", f"{last_act.get('distance_km', 0):.1f} km"),
-        ]
-    else:
+    if not recent:
         stat_chips = [
             ("speed.jpg", "-"),
             ("ascent_icon.jpg", "-"),
             ("distance_icon.jpeg", "-"),
+        ]
+    elif is_run:
+        heartrate = last_act.get("average_heartrate")
+        stat_chips = [
+            ("distance_icon.jpeg", f"{last_act.get('distance_km', 0):.1f} km"),
+            ("speed.jpg", format_pace_min_per_km(avg_speed)),
+            (HEART_ICON_KEY, f"{heartrate:.0f}" if heartrate is not None else "-"),
+        ]
+    else:
+        stat_chips = [
+            ("speed.jpg", f"{avg_speed:.1f} km/h" if avg_speed is not None else "-"),
+            ("ascent_icon.jpg", f"{last_act.get('elevation_gain_m', 0)} m"),
+            ("distance_icon.jpeg", f"{last_act.get('distance_km', 0):.1f} km"),
         ]
 
     icon_h = 34
     col_w = left_w / len(stat_chips)
 
     for i, (icon_filename, value_text) in enumerate(stat_chips):
-        icon = load_icon(pal_img, icon_filename)
+        icon = make_heart_icon(pal_img) if icon_filename == HEART_ICON_KEY else load_icon(pal_img, icon_filename)
         col_x = MARGIN + i * col_w
         icon_anchor = (col_x, rows_y + (INFO_BOX_H - icon_h) / 2)
         draw_icon_value(display, icon, icon_anchor, icon_h, value_text, BLACK, fontsize = 18, center_in_width = col_w)
 
-    # POWER-CHIPS DIREKT UNTER DEN ANDEREN DREI KENNZAHLEN
-    row_gap = 6
-    chip_gap = 0
-    power_box_h = 40
-    power_box_y = rows_y + INFO_BOX_H + chip_gap
-    power_metrics = data.get("power_metrics") or {}
-    power_chips = [
-        ("Average_P.jpg", power_metrics.get("average_power")),
-        ("NP.jpg", power_metrics.get("normalized_power")),
-        ("Power_3S.jpg", power_metrics.get("top_power_3s")),
-    ]
-    power_col_w = left_w / len(power_chips)
-    for i, (icon_filename, value) in enumerate(power_chips):
-        icon = load_icon(pal_img, icon_filename)
-        col_x = MARGIN + i * power_col_w
-        icon_anchor = (col_x, power_box_y + (power_box_h - icon_h) / 2)
-        value_text = str(int(value)) if value is not None else "-"
-        draw_icon_value(display, icon, icon_anchor, icon_h, value_text, BLACK, fontsize = 18, center_in_width = power_col_w)
+    # POWER-CHIPS DIREKT UNTER DEN ANDEREN DREI KENNZAHLEN - NUR BEI RIDES MIT
+    # VORHANDENEN POWER-DATEN. FEHLEN SIE (ODER IST ES EIN LAUF), ENTFÄLLT DIE
+    # CHIP-ZEILE UND DIE ROUTEN-KARTE BEKOMMT DEN GEWONNENEN PLATZ.
+    power_box_y = layout["power_box_y"]
+    power_box_h = layout["power_box_h"]
+    power_metrics = layout["power_metrics"]
+
+    if layout["show_power"]:
+        power_chips = [
+            ("Average_P.jpg", power_metrics.get("average_power")),
+            ("NP.jpg", power_metrics.get("normalized_power")),
+            ("Power_3S.jpg", power_metrics.get("top_power_3s")),
+        ]
+        power_col_w = left_w / len(power_chips)
+        for i, (icon_filename, value) in enumerate(power_chips):
+            icon = load_icon(pal_img, icon_filename)
+            col_x = MARGIN + i * power_col_w
+            icon_anchor = (col_x, power_box_y + (power_box_h - icon_h) / 2)
+            value_text = str(int(value)) if value is not None else "-"
+            draw_icon_value(display, icon, icon_anchor, icon_h, value_text, BLACK, fontsize = 18, center_in_width = power_col_w)
 
     # ROUTEN-KARTE MIT HÖHENPROFIL DARUNTER - HÖHENPROFIL BLEIBT FIX, DIE
-    # ROUTEN-KARTE BEKOMMT DEN GESAMTEN DURCH DIE ENGEREN CHIPS GEWONNENEN PLATZ
-    maps_y = power_box_y + power_box_h + row_gap
-    maps_h = rows_h - INFO_BOX_H - power_box_h - chip_gap - 2 * row_gap
-    ELEVATION_PROFILE_H = 69
-    elevation_h = ELEVATION_PROFILE_H
-    route_map_h = maps_h - elevation_h - row_gap
+    # ROUTEN-KARTE BEKOMMT DEN GESAMTEN DURCH DIE ENGEREN (ODER FEHLENDEN)
+    # CHIPS GEWONNENEN PLATZ
+    maps_y = layout["maps_y"]
+    route_map_h = layout["route_map_h"]
+    elevation_y = layout["elevation_y"]
+    elevation_h = layout["elevation_h"]
 
     route_points = data.get("last_activity_route") or []
     draw_route_map(display, pal_img, (MARGIN, maps_y), (left_w, route_map_h), route_points)
-
-    elevation_y = maps_y + route_map_h + row_gap
     draw_elevation_profile(display, pal_img, (MARGIN, elevation_y), (left_w, elevation_h), route_points)
 
     # RIGHT COLUMN: YEAR-TO-DATE STATS
@@ -1069,6 +1200,8 @@ def draw_page1(display : Display,
     y += DIVIDER_GAP + DIVIDER_THICKNESS
 
     draw_weekly_distance_chart(display, pal_img, (right_x, y), (right_w, block_h), data.get("weekly_cycling_distance") or [])
+
+    return layout["elevation_bottom"]
 
 def draw_page2(display : Display,
                 pal_img : Image.Image,
