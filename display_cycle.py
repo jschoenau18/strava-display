@@ -5,17 +5,21 @@ from display.eink import update_display_from_file
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 OUTPUT_DIR = os.path.join(CURRENT_DIR, "output")
-PAGE_OUTPUT_PATHS = [os.path.join(OUTPUT_DIR, f"dashboard_page{page}.png") for page in range(1, TOTAL_PAGES + 1)]
 PAGE_STATE_PATH = os.path.join(CURRENT_DIR, ".display_page_state")
 
 
-def next_page() -> int:
+def page_output_path(page : int) -> str:
+
+    return os.path.join(OUTPUT_DIR, f"dashboard_page{page}.png")
+
+
+def next_page(total_pages : int) -> int:
 
     """
     Alternates between the pages main.py rendered (1-indexed), so
     repeated runs of this script cycle the e-paper display through them
     over time. Persists the last shown page to disk since each run is a
-    fresh process.
+    fresh process. Always returns 1 if total_pages is 1 (STRAVA_SHOW_PAGE2=0).
     """
 
     try:
@@ -24,7 +28,7 @@ def next_page() -> int:
     except (OSError, ValueError):
         last_page = 0
 
-    page = last_page % TOTAL_PAGES + 1
+    page = last_page % total_pages + 1
 
     with open(PAGE_STATE_PATH, "w") as state_file:
         state_file.write(str(page))
@@ -36,8 +40,13 @@ if __name__ == "__main__":
 
     load_dotenv(dotenv_path = os.path.join(CURRENT_DIR, ".env"))
 
-    page = next_page()
-    page_path = PAGE_OUTPUT_PATHS[page - 1]
+    # Derselbe Schalter wie in main.py: bei STRAVA_SHOW_PAGE2=0 wird immer
+    # nur Seite 1 gezeigt, unabhängig davon, ob noch eine alte
+    # dashboard_page2.png von main.py existiert.
+    total_pages = TOTAL_PAGES if os.getenv("STRAVA_SHOW_PAGE2", "1") == "1" else 1
+
+    page = next_page(total_pages)
+    page_path = page_output_path(page)
 
     if not os.path.exists(page_path):
         print(f"❌ {page_path} existiert noch nicht - main.py muss zuerst laufen.")

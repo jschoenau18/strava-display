@@ -521,6 +521,20 @@ zwischen den Aufrufen anschauen):
 .venv/bin/python display_cycle.py   # nächster Aufruf schaltet auf die andere Seite
 ```
 
+Seite 2 lässt sich per `.env` komplett abschalten, falls nur die
+Aktivitäts-/Jahresstatistik-Seite gewünscht ist:
+
+```env
+STRAVA_SHOW_PAGE2=0
+```
+
+Standardmäßig (Wert fehlt oder ist `1`) sind beide Seiten aktiv. Bei `0`
+rendert `main.py` nur noch `output/dashboard_page1.png` (eine bereits
+vorhandene `dashboard_page2.png` von einem früheren Lauf wird gelöscht),
+lässt den Seiten-Indikator unten weg und `display_cycle.py` zeigt dauerhaft
+Seite 1 statt hin- und herzuschalten. Beide Skripte lesen den Schalter
+unabhängig voneinander, müssen also beide dasselbe `.env` sehen.
+
 Das Wetter im Header wird standardmäßig über den öffentlichen Internetzugang
 des Pi grob lokalisiert und für 24 Stunden gecacht. Für den stationären Pi ist
 eine feste, genauere Position in `.env` empfehlenswert:
@@ -549,10 +563,15 @@ Start (`if __name__ == "__main__"`):
 3. Falls Token abgelaufen: `refresh_api_access()`.
 4. `get_dashboard_data(client)` aufrufen.
 5. `dashboard_data["release_label"] = get_release_label()` setzen (siehe [`backend/version.py`](#backendversionpy)).
-6. Für jede Seite (`page` 1 und 2, siehe `TOTAL_PAGES` in
-   [`display/display.py`](#displaydisplaypy)) `render_dashboard(data,
-   output_path=..., page=page)` aufrufen → schreibt
-   `output/dashboard_page1.png` und `output/dashboard_page2.png`.
+6. `total_pages` bestimmen: `TOTAL_PAGES` (siehe
+   [`display/display.py`](#displaydisplaypy)), außer `STRAVA_SHOW_PAGE2=0`
+   ist gesetzt – dann `1`.
+7. Für jede Seite von `1` bis `total_pages` `render_dashboard(data,
+   output_path=..., page=page, total_pages=total_pages)` aufrufen → schreibt
+   `output/dashboard_page1.png` (und bei zwei Seiten zusätzlich
+   `output/dashboard_page2.png`). Eine `dashboard_page2.png` von einem
+   früheren Lauf mit mehr Seiten wird gelöscht, falls `total_pages` jetzt
+   kleiner ist, damit `display_cycle.py` nie ein veraltetes Bild erwischt.
 
 ### `display_cycle.py`
 
@@ -561,14 +580,17 @@ ausführbares Skript. Ruft keine Strava-API auf und braucht daher kein
 gültiges Token – nur die von `main.py` bereits gerenderten PNGs. Ablauf beim
 Start (`if __name__ == "__main__"`):
 
-1. `.env` laden (nur für `STRAVA_UPDATE_DISPLAY`).
-2. `next_page()`: liest die zuletzt gezeigte Seite aus `.display_page_state`,
-   schaltet auf die jeweils andere um (1 ↔ 2 bei `TOTAL_PAGES = 2`) und
-   schreibt den neuen Wert zurück. Fehlt die Datei oder ist sie kein gültiger
-   Wert, wird bei Seite 1 gestartet.
-3. Falls `output/dashboard_page{N}.png` für die ermittelte Seite noch nicht
+1. `.env` laden (für `STRAVA_UPDATE_DISPLAY` und `STRAVA_SHOW_PAGE2`).
+2. `total_pages` genau wie in `main.py` bestimmen (`TOTAL_PAGES` oder `1`
+   bei `STRAVA_SHOW_PAGE2=0`).
+3. `next_page(total_pages)`: liest die zuletzt gezeigte Seite aus
+   `.display_page_state`, schaltet auf die jeweils nächste um (1 ↔ 2 bei
+   zwei Seiten, sonst bleibt es bei 1) und schreibt den neuen Wert zurück.
+   Fehlt die Datei oder ist sie kein gültiger Wert, wird bei Seite 1
+   gestartet.
+4. Falls `output/dashboard_page{N}.png` für die ermittelte Seite noch nicht
    existiert (main.py ist noch nie gelaufen): Meldung, kein Fehler.
-4. Falls `STRAVA_UPDATE_DISPLAY=1`: `update_display_from_file(page_path)`
+5. Falls `STRAVA_UPDATE_DISPLAY=1`: `update_display_from_file(page_path)`
    aufrufen, sonst nur eine Info-Meldung ausgeben.
 
 ---
@@ -839,28 +861,32 @@ Formatiert ein Datum ohne Abhängigkeit von der `de_DE`-Systemlocale
 Tageszeitabhängige Begrüßung ("Guten Morgen" / "Guten Tag" / "Guten Abend" /
 "Gute Nacht" / "Hallo").
 
-#### `make_gui(data: dict, page: int = 1) -> Image`
+#### `make_gui(data: dict, page: int = 1, total_pages: int = TOTAL_PAGES) -> Image`
 
 Baut das komplette Layout einer Dashboard-Seite aus dem `data`-Dict (Format
 siehe
 [`get_dashboard_data()`](#get_dashboard_dataclient-stravalibclient-n_recent-int--6---dict)).
-Header (Logo/Gruß/Datum/Wetter) sowie Versions-Label und Seiten-Indikator
-unten sind auf beiden Seiten identisch; der Inhalt dazwischen kommt je nach
-`page` von `draw_page1()` (`page=1`, Standard: Aktivitäts-Titel, Stat-Chips,
+Header (Logo/Gruß/Datum/Wetter) sowie Versions-Label unten sind auf beiden
+Seiten identisch; der Inhalt dazwischen kommt je nach `page` von
+`draw_page1()` (`page=1`, Standard: Aktivitäts-Titel, Stat-Chips,
 Leistungs-Chips, Routen-Karte und Höhenprofil links, Jahres-Distanz/
 Höhenmeter/Bestleistungen rechts) oder `draw_page2()` (`page=2`: Tabelle der
 letzten Aktivitäten links (siehe `draw_activity_table()`), Monats-Kalender
-des aktuellen Monats rechts (siehe `draw_month_calendar()`)). Zeichnet
-außerdem `data["release_label"]` (siehe
-[`backend/version.py`](#backendversionpy)) klein unten links in den Rand;
-zu lange Labels werden auf die verfügbare Breite gekürzt (`…`-Suffix).
+des aktuellen Monats rechts (siehe `draw_month_calendar()`)). Der
+Seiten-Indikator unten mittig wird nur gezeichnet, wenn `total_pages > 1`
+ist (siehe `STRAVA_SHOW_PAGE2` in [Lokal testen](#lokal-testen-ohne-display)
+– bei nur einer Seite gibt es nichts anzuzeigen). Zeichnet außerdem
+`data["release_label"]` (siehe [`backend/version.py`](#backendversionpy))
+klein unten links in den Rand; zu lange Labels werden auf die verfügbare
+Breite gekürzt (`…`-Suffix).
 
-#### `render_dashboard(data: dict, output_path: str | None = None, page: int = 1) -> Image`
+#### `render_dashboard(data: dict, output_path: str | None = None, page: int = 1, total_pages: int = TOTAL_PAGES) -> Image`
 
 **Öffentlicher Haupteinstiegspunkt** des Moduls: ruft `make_gui(data,
-page=page)` auf und speichert das Ergebnis optional als PNG
-(`RGB`-konvertiert) unter `output_path`. `main.py` ruft das einmal pro Seite
-(`1` bis `TOTAL_PAGES`) auf.
+page=page, total_pages=total_pages)` auf und speichert das Ergebnis optional
+als PNG (`RGB`-konvertiert) unter `output_path`. `main.py` ruft das einmal
+pro Seite auf (`1` bis `total_pages`, siehe `main.py`s eigenes
+`total_pages`).
 
 *(Interne Hilfsfunktionen `_select_font`, `_project_route_points`,
 `_haversine_km`, `_classify_climbs` sind nicht Teil der öffentlichen API.)*

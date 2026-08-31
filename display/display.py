@@ -829,7 +829,7 @@ def generate_greeting() -> str:
 # FUNKTION, DIE AUS DER MAIN AUFGERUFEN WIRD
 # BRAUCHT DIE API DATEN AUS backend.api_reader.get_dashboard_data()
 
-def make_gui(data : dict, page : int = 1) -> Image.Image:
+def make_gui(data : dict, page : int = 1, total_pages : int = TOTAL_PAGES) -> Image.Image:
 
 
     display = Display()
@@ -923,8 +923,9 @@ def make_gui(data : dict, page : int = 1) -> Image.Image:
         release_label = release_label[:-2] + "…"
     display.draw.text((MARGIN, display.size[1] - MARGIN / 2), release_label, fill = BLACK, font = release_font, anchor = "lm")
 
-    # SEITEN-INDIKATOR, MITTIG UNTEN, ETWAS ÜBER DER VERSIONS-ZEILE
-    draw_page_indicator(display, pal_img, (display.size[0] / 2, display.size[1] - MARGIN - 6), current_page = page - 1, total_pages = TOTAL_PAGES)
+    # SEITEN-INDIKATOR, MITTIG UNTEN, ETWAS ÜBER DER VERSIONS-ZEILE - NUR BEI MEHR ALS EINER SEITE
+    if total_pages > 1:
+        draw_page_indicator(display, pal_img, (display.size[0] / 2, display.size[1] - MARGIN - 6), current_page = page - 1, total_pages = total_pages)
 
     return display.image
 
@@ -1104,14 +1105,14 @@ def draw_page2(display : Display,
     training_days = set(data.get("training_days_this_month") or [])
     draw_month_calendar(display, pal_img, (right_x, calendar_y), (right_w, calendar_h), now.year, now.month, training_days)
 
-def render_dashboard(data : dict, output_path : str | None = None, page : int = 1) -> Image.Image:
+def render_dashboard(data : dict, output_path : str | None = None, page : int = 1, total_pages : int = TOTAL_PAGES) -> Image.Image:
 
     """
     Builds the dashboard image from the given data dict (see
     backend.api_reader.get_dashboard_data) and optionally saves it to disk.
     """
 
-    image = make_gui(data, page = page)
+    image = make_gui(data, page = page, total_pages = total_pages)
 
     if output_path is not None:
         image.convert("RGB").save(output_path)
