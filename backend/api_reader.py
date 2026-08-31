@@ -99,6 +99,7 @@ def _activity_to_dict(act) -> dict:
         "moving_time_min": round(_duration_seconds(act.moving_time) / 60),
         "elevation_gain_m": round(float(act.total_elevation_gain)) if act.total_elevation_gain is not None else 0,
         "average_watts": round(act.average_watts) if act.average_watts is not None else None,
+        "average_heartrate": round(act.average_heartrate) if act.average_heartrate is not None else None,
         "average_speed_kmh": round(float(act.average_speed) * 3.6, 1) if act.average_speed is not None else None,
         "kudos_count": int(act.kudos_count or 0),
     }
@@ -140,6 +141,29 @@ def get_weekly_cycling_distance(client : stravalib.Client, weeks : int = 6) -> l
         {"label": week.strftime("%d.%m."), "distance_km": round(distance, 1)}
         for week, distance in distances.items()
     ]
+
+def get_current_month_training_days(client : stravalib.Client) -> list[int]:
+
+    """
+    Returns the day-of-month (1-31) of every day this month that has at
+    least one activity of any sport type, used to highlight trained days
+    in the dashboard's month calendar.
+    """
+
+    today = datetime.now().date()
+    month_start = today.replace(day = 1)
+    after = datetime.combine(month_start, datetime.min.time())
+
+    days = set()
+    for activity in client.get_activities(after = after):
+        if activity.start_date_local is None:
+            continue
+
+        activity_date = activity.start_date_local.date()
+        if activity_date.year == today.year and activity_date.month == today.month:
+            days.add(activity_date.day)
+
+    return sorted(days)
 
 def get_last_activity_route(streams : dict) -> list[tuple[float, float, float | None]]:
 
@@ -316,7 +340,7 @@ def get_power_metrics(streams : dict, average_power : int | float | None) -> dic
         "top_power_3s": round(top_power_3s) if top_power_3s is not None else None,
     }
 
-def get_dashboard_data(client : stravalib.Client, n_recent : int = 1) -> dict:
+def get_dashboard_data(client : stravalib.Client, n_recent : int = 6) -> dict:
 
     """
     Pulls and calculates everything the display needs in one call.
@@ -334,6 +358,7 @@ def get_dashboard_data(client : stravalib.Client, n_recent : int = 1) -> dict:
         "last_activity": last_activity,
         "recent_activities": recent_activities,
         "weekly_cycling_distance": get_weekly_cycling_distance(client),
+        "training_days_this_month": get_current_month_training_days(client),
         "last_activity_route": last_activity_route,
         "best_power_efforts": get_best_power_efforts(streams),
         "power_metrics": get_power_metrics(streams, last_activity.get("average_watts") if last_activity else None),

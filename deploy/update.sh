@@ -11,11 +11,21 @@ EPAPER_PYTHONPATH="/home/jschoenau/e-Paper/E-paper_Separate_Program/4inch_e-Pape
 cd "$REPO_DIR"
 
 run_dashboard() {
-    # flock serializes against strava-dashboard.timer / other concurrent runs -
-    # both touch the same e-paper GPIO pins, and a second process claiming an
-    # already-held pin crashes with "lgpio.error: 'GPIO busy'" instead of waiting.
+    # flock serializes against strava-dashboard.timer / strava-display-cycle.timer -
+    # display_cycle.py touches the e-paper GPIO pins, and a second process
+    # claiming an already-held pin crashes with "lgpio.error: 'GPIO busy'"
+    # instead of waiting. main.py itself never touches the GPIO pins, but
+    # shares the same lock so it can't race a concurrent read of the PNGs it
+    # writes.
+    #
+    # Runs display_cycle.py right after main.py (rather than waiting up to 2
+    # minutes for strava-display-cycle.timer) both to push the new release's
+    # render onto the panel immediately and, as part of verification, to
+    # exercise the actual GPIO push path.
     GPIOZERO_PIN_FACTORY=lgpio PYTHONPATH="$EPAPER_PYTHONPATH" \
-        flock -w 60 "$REPO_DIR/.dashboard.lock" "$REPO_DIR/.venv/bin/python" main.py
+        flock -w 60 "$REPO_DIR/.dashboard.lock" "$REPO_DIR/.venv/bin/python" main.py \
+        && GPIOZERO_PIN_FACTORY=lgpio PYTHONPATH="$EPAPER_PYTHONPATH" \
+        flock -w 60 "$REPO_DIR/.dashboard.lock" "$REPO_DIR/.venv/bin/python" display_cycle.py
 }
 
 rollback_to() {
@@ -63,4 +73,4 @@ if ! run_dashboard; then
 fi
 
 echo "Update complete and verified, now at $latest_tag."
-echo "Note: if deploy/strava-dashboard.service or .timer changed in this release, re-copy them to /etc/systemd/system and run 'sudo systemctl daemon-reload' manually."
+echo "Note: if any deploy/*.service or .timer files changed in this release, re-copy them to /etc/systemd/system and run 'sudo systemctl daemon-reload' manually."

@@ -3,24 +3,26 @@
 ![GitHub release](https://img.shields.io/github/v/release/jschoenau18/strava-display)
 ![GitHub tag](https://img.shields.io/github/v/tag/jschoenau18/strava-display)
 
-Rendert die letzte Strava-Aktivität und die Jahresstatistik als 600×400px-Bild
-und zeigt es auf einem Waveshare Spectra-6-E-Paper-Display an (oder speichert
-es nur als PNG, falls kein Display angeschlossen ist).
+Rendert zwei 600×400px-Dashboard-Seiten (letzte Aktivität + Jahresstatistik,
+und eine Tabelle der letzten Aktivitäten) und zeigt sie abwechselnd auf einem
+Waveshare Spectra-6-E-Paper-Display an (oder speichert sie nur als PNGs,
+falls kein Display angeschlossen ist).
 
 ## Inhalt
 
 - [Architektur](#architektur)
 - [Abhängigkeiten](#abhängigkeiten)
-- [Datenfluss](#datenfluss-ein-programmlauf)
+- [Datenfluss](#datenfluss)
 - [Projektstruktur](#projektstruktur)
 - [Hardware-Setup](#hardware-setup)
   - [Raspberry Pi im lokalen Netz finden und per SSH verbinden](#raspberry-pi-im-lokalen-netz-finden-und-per-ssh-verbinden)
-    - [Automatisches Update alle 10 Minuten](#automatisches-update-alle-10-minuten)
+    - [Automatisches Update alle 10 Minuten + Seitenwechsel alle 2 Minuten](#automatisches-update-alle-10-minuten--seitenwechsel-alle-2-minuten)
     - [Automatisches Deployment neuer Releases](#automatisches-deployment-neuer-releases)
     - [Manuelle Git-Befehle auf dem Pi](#manuelle-git-befehle-auf-dem-pi)
 - [Lokal testen](#lokal-testen-ohne-display)
 - [Modulreferenz](#modulreferenz)
   - [`main.py`](#mainpy)
+  - [`display_cycle.py`](#display_cyclepy)
   - [`backend/api_reader.py`](#backendapi_readerpy)
     - [`backend/weather.py`](#backendweatherpy)
   - [`backend/version.py`](#backendversionpy)
@@ -51,15 +53,17 @@ graph LR
         PANEL["Waveshare Spectra 6\nE-Paper Panel"]
     end
 
-    MAIN["main.py"] -->|liest/schreibt Tokens| ENV
+    MAIN["main.py\n(alle 10 min)"] -->|liest/schreibt Tokens| ENV
     MAIN -->|api_setup / refresh_api_access\nget_dashboard_data| API
     API <-->|OAuth, Aktivitäten, Streams| STRAVA
     API --> WEATHER
     WEATHER <-->|Wetter, Standort| WX["Open-Meteo / IP-Geolokalisierung"]
     MAIN -->|dashboard_data dict| DISP
-    DISP -->|PNG| OUT[("output/dashboard.png")]
-    MAIN -->|render_dashboard image| DISP
-    MAIN -->|update_display_from_file| EINK
+    MAIN -->|render_dashboard image, page=1| DISP
+    MAIN -->|render_dashboard image, page=2| DISP
+    DISP -->|2 PNGs| OUT[("output/dashboard_page1.png\noutput/dashboard_page2.png")]
+    CYCLE["display_cycle.py\n(alle 2 min)"] -->|liest| OUT
+    CYCLE -->|update_display_from_file| EINK
     EINK -->|SPI, waveshare_epd| PANEL
 ```
 
@@ -67,15 +71,21 @@ graph LR
 
 | Modul | Zuständigkeit |
 | ------------------------ | ------------- |
-| `main.py` | Orchestriert den Ablauf: Auth-Status prüfen, Daten holen, Bild rendern, optional aufs Display schreiben. |
+| `main.py` | Orchestriert den Datenteil: Auth-Status prüfen, Daten holen, beide Dashboard-Seiten als PNG rendern. Läuft alle 10 Minuten, fasst das Display selbst nicht an. |
+| `display_cycle.py` | Wechselt, welche der beiden vorgerenderten PNGs auf dem Panel zu sehen ist. Läuft alle 2 Minuten, ruft keine Strava-API auf. |
 | `backend/api_reader.py` | Strava-API-Zugriff (`stravalib`) sowie Aufbereitung von Aktivitäten, Routen, Power und Kudos. |
 | `backend/weather.py` | Ermittelt den Pi-Standort und lädt Temperatur, Wind und Niederschlagsprognose von Open-Meteo. |
-| `display/display.py` | Baut aus dem Daten-`dict` ein PIL-Bild für die feste 6-Farben-E-Ink-Palette. Kein Netzwerkzugriff. |
+| `display/display.py` | Baut aus dem Daten-`dict` ein PIL-Bild pro Seite für die feste 6-Farben-E-Ink-Palette. Kein Netzwerkzugriff. |
 | `display/eink.py` | Dünner Treiber-Wrapper, der ein fertiges Bild über die Waveshare-Bibliothek ans Panel schickt. Einziger Ort mit Hardwarezugriff. |
 
-Die Trennung ist bewusst: `api_reader.py` und `display.py` kennen sich nicht
-gegenseitig, sie kommunizieren nur über das von `get_dashboard_data()`
-zurückgegebene `dict` (siehe [Datenformat](#get_dashboard_dataclient-stravalibclient-n_recent-int--1---dict)).
+Die Trennung von Rendern (`main.py`, alle 10 min) und Anzeigen
+(`display_cycle.py`, alle 2 min) ist bewusst: Ersteres braucht die
+Strava-API und darf ruhig etwas dauern, Letzteres braucht nur zwei bereits
+fertige PNGs von der Platte zu lesen und ans Panel zu schicken, kann also
+viel öfter laufen, ohne die API-Rate zu belasten. Ebenso bewusst ist die
+Trennung von `api_reader.py` und `display.py`: sie kennen sich nicht
+gegenseitig, sondern kommunizieren nur über das von `get_dashboard_data()`
+zurückgegebene `dict` (siehe [Datenformat](#get_dashboard_dataclient-stravalibclient-n_recent-int--6---dict)).
 
 ## Abhängigkeiten
 
@@ -94,7 +104,11 @@ Waveshare-Bibliothek nutzt `gpiozero` für den GPIO-Zugriff, das wiederum
 `lgpio` als Backend braucht – siehe [Raspberry Pi einrichten](#raspberry-pi-einrichten)).
 Diese werden separat installiert, weil sie hardware- und systemabhängig sind.
 
-## Datenfluss (ein Programmlauf)
+## Datenfluss
+
+`main.py` (alle 10 Minuten) und `display_cycle.py` (alle 2 Minuten) sind
+zwei unabhängige Programmläufe, die nur über die beiden PNGs in `output/`
+verbunden sind.
 
 ```mermaid
 sequenceDiagram
@@ -103,7 +117,7 @@ sequenceDiagram
     participant API as api_reader.py
     participant S as Strava API
     participant D as display.py
-    participant E as eink.py
+    participant OUT as output/*.png
 
     M->>ENV: load_dotenv()
     alt kein Token vorhanden
@@ -118,16 +132,29 @@ sequenceDiagram
 
     M->>API: get_dashboard_data(client)
     API->>S: get_athlete / get_athlete_stats
-    API->>S: get_activities(limit=1)
+    API->>S: get_activities(limit=6)
     API->>S: get_activity_streams(latlng, altitude, time, watts)
-    S-->>API: Athlet, YTD-Stats, letzte Aktivität, Streams
+    S-->>API: Athlet, YTD-Stats, letzte Aktivitäten, Streams
     API-->>M: dashboard_data (dict)
 
-    M->>D: render_dashboard(dashboard_data, output_path)
-    D-->>M: PNG unter output/dashboard.png
+    M->>D: render_dashboard(dashboard_data, output_path, page=1)
+    D-->>OUT: dashboard_page1.png
+    M->>D: render_dashboard(dashboard_data, output_path, page=2)
+    D-->>OUT: dashboard_page2.png
+```
 
+```mermaid
+sequenceDiagram
+    participant C as display_cycle.py
+    participant STATE as .display_page_state
+    participant OUT as output/*.png
+    participant E as eink.py
+
+    C->>STATE: letzte gezeigte Seite lesen, umschalten
+    STATE-->>C: nächste Seite (1 oder 2)
     opt STRAVA_UPDATE_DISPLAY=1
-        M->>E: update_display_from_file(output_path)
+        C->>OUT: dashboard_page{N}.png lesen
+        C->>E: update_display_from_file(page_path)
         E->>E: waveshare_epd.epd4in0e ansteuern
     end
 ```
@@ -136,7 +163,8 @@ sequenceDiagram
 
 ```text
 strava-api-display/
-├── main.py                  # Einstiegspunkt / Orchestrierung
+├── main.py                  # Datenabruf + Rendering beider Seiten (alle 10 min)
+├── display_cycle.py         # Wechselt die angezeigte Seite (alle 2 min)
 ├── backend/
 │   ├── api_reader.py        # Strava-Auth + Datenabruf
 │   ├── weather.py            # Pi-Standort + Wetterdaten
@@ -146,9 +174,10 @@ strava-api-display/
 │   ├── eink.py               # Waveshare-Treiber-Wrapper
 │   ├── fonts/                # Roboto (+ Condensed), Regular/Bold
 │   └── img/                  # Logo und Statistik-Icons
-├── deploy/                   # systemd-Units für 10-min-Timer + nächtliches Release-Update
-├── output/                   # render_dashboard()-Ausgabe (gitignored)
+├── deploy/                   # systemd-Units für 10-min-/2-min-Timer + nächtliches Release-Update
+├── output/                   # render_dashboard()-Ausgabe: dashboard_page1.png, dashboard_page2.png (gitignored)
 ├── .env                       # Strava-Credentials/Tokens (gitignored)
+├── .display_page_state        # zuletzt gezeigte Seite, von display_cycle.py verwaltet (gitignored)
 └── requirements.txt
 ```
 
@@ -277,59 +306,76 @@ python3 --version
    `scp .env <pi-user>@<pi-host>:~/strava-api-display/.env` – `.env` ist
    gitignored und kommt daher nicht über den Git-Clone mit),
    `STRAVA_UPDATE_DISPLAY=1` setzen.
-6. Testlauf:
+6. Testlauf. `main.py` rendert nur die beiden PNGs und braucht dafür keinen
+   GPIO-Zugriff; `display_cycle.py` schickt die jeweils nächste davon ans
+   Panel:
 
     ```sh
-    GPIOZERO_PIN_FACTORY=lgpio PYTHONPATH=~/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib flock -w 60 ~/strava-api-display/.dashboard.lock .venv/bin/python main.py
+    .venv/bin/python main.py
+    GPIOZERO_PIN_FACTORY=lgpio PYTHONPATH=~/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib flock -w 60 ~/strava-api-display/.dashboard.lock .venv/bin/python display_cycle.py
     ```
 
-    Das `flock` ist kein Zufall: Sobald der Timer unten läuft, feuert er alle
-    10 Minuten `main.py` im Hintergrund. Ein manueller Testlauf zur gleichen
-    Zeit greift sonst auf dieselben E-Paper-GPIO-Pins zu wie der laufende
-    Timer-Job und crasht mit `lgpio.error: 'GPIO busy'` – `flock` sorgt
-    dafür, dass sich beide Läufe die Pins nacheinander statt gleichzeitig
-    teilen (siehe [Automatisches Update alle 10 Minuten](#automatisches-update-alle-10-minuten)).
+    Das `flock` um `display_cycle.py` ist kein Zufall: Sobald der Timer unten
+    läuft, feuert er alle 2 Minuten `display_cycle.py` im Hintergrund. Ein
+    manueller Testlauf zur gleichen Zeit greift sonst auf dieselben
+    E-Paper-GPIO-Pins zu wie der laufende Timer-Job und crasht mit
+    `lgpio.error: 'GPIO busy'` – `flock` sorgt dafür, dass sich beide Läufe
+    die Pins nacheinander statt gleichzeitig teilen (siehe
+    [Automatisches Update alle 10 Minuten + Seitenwechsel alle 2 Minuten](#automatisches-update-alle-10-minuten--seitenwechsel-alle-2-minuten)).
 
-    Kein `.env` mit gültigen Tokens dabei? Dann läuft hier interaktiv der
-    OAuth-Flow von `api_setup()` (Browser-Login, Code ins SSH-Terminal einfügen).
+    Kein `.env` mit gültigen Tokens dabei? Dann läuft beim `main.py`-Aufruf
+    interaktiv der OAuth-Flow von `api_setup()` (Browser-Login, Code ins
+    SSH-Terminal einfügen).
 
-### Automatisches Update alle 10 Minuten
+### Automatisches Update alle 10 Minuten + Seitenwechsel alle 2 Minuten
 
-Die Unit-Dateien in [`deploy/`](deploy/) richten einen systemd-Timer ein, der
-`main.py` alle 10 Minuten ausführt (auch ohne aktive Login-Session, mit Logs
-über `journalctl`):
+Die Unit-Dateien in [`deploy/`](deploy/) richten zwei systemd-Timer ein (auch
+ohne aktive Login-Session, mit Logs über `journalctl`):
 
-1. `deploy/strava-dashboard.service` geht von `jschoenau`/`/home/jschoenau/strava-api-display`
-   und der Waveshare-Bibliothek unter `~/e-Paper` aus (inkl. der
-   `Environment=PYTHONPATH=...`-Zeile sowie `Environment=GPIOZERO_PIN_FACTORY=lgpio`,
-   siehe [Raspberry Pi einrichten](#raspberry-pi-einrichten)) – bei abweichenden
-   Pfaden entsprechend anpassen. `ExecStart` läuft über `flock -w 60
-   .dashboard.lock`, damit sich dieser Timer-Job nicht mit einem manuellen
-   Testlauf oder dem nächtlichen Update-Skript (siehe
-   [Automatisches Deployment neuer Releases](#automatisches-deployment-neuer-releases))
-   um dieselben E-Paper-GPIO-Pins streitet – ohne Lock crasht der zweite
-   gleichzeitige Zugriff mit `lgpio.error: 'GPIO busy'`, statt einfach zu warten.
-2. Beide Dateien nach `/etc/systemd/system/` kopieren:
+- `strava-dashboard.timer` führt alle 10 Minuten `main.py` aus, das die
+  Strava-Daten holt und beide Dashboard-Seiten neu rendert.
+- `strava-display-cycle.timer` führt alle 2 Minuten `display_cycle.py` aus,
+  das nur umschaltet, welche der beiden vorgerenderten Seiten das Panel
+  gerade zeigt.
+
+1. `deploy/strava-dashboard.service` und `deploy/strava-display-cycle.service`
+   gehen von `jschoenau`/`/home/jschoenau/strava-api-display` aus – bei
+   abweichenden Pfaden entsprechend anpassen. Nur
+   `strava-display-cycle.service` braucht die Waveshare-Bibliothek unter
+   `~/e-Paper` (`Environment=PYTHONPATH=...` sowie
+   `Environment=GPIOZERO_PIN_FACTORY=lgpio`, siehe
+   [Raspberry Pi einrichten](#raspberry-pi-einrichten)), da nur
+   `display_cycle.py` die GPIO-Pins anfasst. Beide `ExecStart`-Zeilen laufen
+   trotzdem über denselben `flock -w 60 .dashboard.lock`: `main.py` schreibt
+   die PNGs, die `display_cycle.py` liest, und ohne Lock könnte Letzteres
+   mitten in einem Schreibvorgang eine unvollständige Datei erwischen; bei
+   zwei gleichzeitigen `display_cycle.py`-Läufen (z. B. Timer + manueller
+   Test) verhindert der Lock zusätzlich `lgpio.error: 'GPIO busy''`.
+2. Alle vier Dateien nach `/etc/systemd/system/` kopieren:
 
     ```sh
-    sudo cp deploy/strava-dashboard.service deploy/strava-dashboard.timer /etc/systemd/system/
+    sudo cp deploy/strava-dashboard.service deploy/strava-dashboard.timer \
+           deploy/strava-display-cycle.service deploy/strava-display-cycle.timer \
+           /etc/systemd/system/
     sudo systemctl daemon-reload
-    sudo systemctl enable --now strava-dashboard.timer
+    sudo systemctl enable --now strava-dashboard.timer strava-display-cycle.timer
     ```
 
 3. Prüfen:
 
     ```sh
-    systemctl list-timers strava-dashboard.timer   # zeigt nächste geplante Ausführung
-    sudo systemctl start strava-dashboard.service   # Testlauf sofort anstoßen
-    journalctl -u strava-dashboard.service -f       # Logs live verfolgen
+    systemctl list-timers 'strava-*.timer'                # zeigt nächste geplante Ausführungen
+    sudo systemctl start strava-dashboard.service          # Rendern sofort anstoßen
+    sudo systemctl start strava-display-cycle.service      # Seitenwechsel sofort anstoßen
+    journalctl -u strava-dashboard.service -u strava-display-cycle.service -f   # Logs live verfolgen
     ```
 
-Alternativ genügt auch ein Cron-Eintrag (`crontab -e`), falls kein systemd
-gewünscht ist:
+Alternativ genügen auch zwei Cron-Einträge (`crontab -e`), falls kein
+systemd gewünscht ist:
 
 ```cron
-*/10 * * * * cd /home/jschoenau/strava-api-display && PYTHONPATH=/home/jschoenau/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib flock -w 60 .dashboard.lock .venv/bin/python main.py >> /home/jschoenau/strava-api-display/cron.log 2>&1
+*/10 * * * * cd /home/jschoenau/strava-api-display && flock -w 60 .dashboard.lock .venv/bin/python main.py >> /home/jschoenau/strava-api-display/cron.log 2>&1
+*/2 * * * * cd /home/jschoenau/strava-api-display && PYTHONPATH=/home/jschoenau/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib GPIOZERO_PIN_FACTORY=lgpio flock -w 60 .dashboard.lock .venv/bin/python display_cycle.py >> /home/jschoenau/strava-api-display/cron.log 2>&1
 ```
 
 ### Automatisches Deployment neuer Releases
@@ -370,24 +416,27 @@ geklont, dann direkt weiter mit Schritt 2.
     ±10 min Zufallsverzögerung) per `git fetch --tags` die Tags von `origin`,
     ermittelt per Versionssortierung den neuesten `v*`-Tag und checkt ihn nur
     aus, wenn er vom aktuell ausgecheckten Tag abweicht. Danach werden die
-    `requirements.txt`-Abhängigkeiten neu installiert und `main.py` einmal
-    direkt ausgeführt (über denselben `flock .dashboard.lock`-Lock wie
-    `strava-dashboard.timer`, siehe [Automatisches Update alle 10 Minuten](#automatisches-update-alle-10-minuten) –
-    verhindert `lgpio.error: 'GPIO busy'`, falls beide Timer sich zeitlich
+    `requirements.txt`-Abhängigkeiten neu installiert und nacheinander
+    `main.py` (rendert beide Seiten neu) und `display_cycle.py` (schickt die
+    fällige Seite ans Panel) einmal direkt ausgeführt (über denselben
+    `flock .dashboard.lock`-Lock wie `strava-dashboard.timer` und
+    `strava-display-cycle.timer`, siehe
+    [Automatisches Update alle 10 Minuten + Seitenwechsel alle 2 Minuten](#automatisches-update-alle-10-minuten--seitenwechsel-alle-2-minuten) –
+    verhindert `lgpio.error: 'GPIO busy'`, falls sich die Timer zeitlich
     überschneiden) – einerseits um das E-Paper-Display sofort auf den
     neuen Stand zu bringen (inkl. aktualisiertem Versions-Label), statt bis
-    zu 10 Minuten auf den nächsten `strava-dashboard.timer`-Lauf zu warten,
-    andererseits als **Verifikation**: schlägt dieser Lauf fehl (Absturz,
-    fehlerhafter Import etc.), checkt das Skript automatisch den vorherigen
-    Tag wieder aus, installiert dessen Abhängigkeiten zurück und rendert
-    damit erneut – der Pi bleibt also nie auf einem kaputten Release hängen,
-    sondern fällt selbstständig auf den letzten funktionierenden Stand
-    zurück. In dem Fall beendet sich `strava-update.service` mit einem
-    Fehlercode (sichtbar in `journalctl`/`systemctl status`), auch wenn der
-    Rollback selbst geklappt hat – so bleibt sichtbar, dass ein Release
-    übersprungen wurde. Da `.env` und `output/` per `.gitignore` nicht
-    versioniert sind, bleiben Tokens und gerenderte Bilder bei alldem
-    unberührt.
+    zu 2 Minuten auf den nächsten `strava-display-cycle.timer`-Lauf zu
+    warten, andererseits als **Verifikation**: schlägt einer der beiden Läufe
+    fehl (Absturz, fehlerhafter Import etc.), checkt das Skript automatisch
+    den vorherigen Tag wieder aus, installiert dessen Abhängigkeiten zurück
+    und rendert damit erneut – der Pi bleibt also nie auf einem kaputten
+    Release hängen, sondern fällt selbstständig auf den letzten
+    funktionierenden Stand zurück. In dem Fall beendet sich
+    `strava-update.service` mit einem Fehlercode (sichtbar in
+    `journalctl`/`systemctl status`), auch wenn der Rollback selbst geklappt
+    hat – so bleibt sichtbar, dass ein Release übersprungen wurde. Da `.env`
+    und `output/` per `.gitignore` nicht versioniert sind, bleiben Tokens
+    und gerenderte Bilder bei alldem unberührt.
 
 3. **Prüfen:**
 
@@ -401,7 +450,7 @@ geklont, dann direkt weiter mit Schritt 2.
     (z. B. ein neues `strava-dashboard.timer`-Intervall), kopiert das
     Update-Skript diese bewusst **nicht** automatisch nach
     `/etc/systemd/system/` – das bleibt ein manueller Schritt wie in
-    [Automatisches Update alle 10 Minuten](#automatisches-update-alle-10-minuten)
+    [Automatisches Update alle 10 Minuten + Seitenwechsel alle 2 Minuten](#automatisches-update-alle-10-minuten--seitenwechsel-alle-2-minuten)
     beschrieben, damit Systemd-Units nicht unbeaufsichtigt verändert werden.
 
 ### Manuelle Git-Befehle auf dem Pi
@@ -442,21 +491,34 @@ chmod 600 ~/.ssh/config
 Nach einem manuellen `git pull` läuft das Dashboard nicht automatisch neu –
 dafür entweder bis zu 10 Minuten auf `strava-dashboard.timer` warten oder
 sofort selbst anstoßen (über denselben `flock`-Lock wie die Timer, siehe
-[Automatisches Update alle 10 Minuten](#automatisches-update-alle-10-minuten)):
+[Automatisches Update alle 10 Minuten + Seitenwechsel alle 2 Minuten](#automatisches-update-alle-10-minuten--seitenwechsel-alle-2-minuten)):
 
 ```sh
+flock -w 60 ~/strava-api-display/.dashboard.lock ~/strava-api-display/.venv/bin/python main.py
 GPIOZERO_PIN_FACTORY=lgpio PYTHONPATH=~/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib \
-  flock -w 60 ~/strava-api-display/.dashboard.lock ~/strava-api-display/.venv/bin/python main.py
+  flock -w 60 ~/strava-api-display/.dashboard.lock ~/strava-api-display/.venv/bin/python display_cycle.py
 ```
 
 ## Lokal testen (ohne Display)
 
-Ohne `STRAVA_UPDATE_DISPLAY=1` schreibt das Programm nur `output/dashboard.png` –
-nützlich zum Testen von Layout-Änderungen ohne angeschlossenes Display:
+`main.py` fasst das Display gar nicht mehr an – es schreibt immer nur die
+beiden PNGs unter `output/`, egal ob `STRAVA_UPDATE_DISPLAY` gesetzt ist.
+Nützlich zum Testen von Layout-Änderungen ohne angeschlossenes Display:
 
 ```sh
 .venv/bin/python main.py
-open output/dashboard.png   # macOS
+open output/dashboard_page1.png output/dashboard_page2.png   # macOS
+```
+
+`display_cycle.py` lässt sich genauso ohne Hardware ausführen – ohne
+`STRAVA_UPDATE_DISPLAY=1` (oder ohne installierte `waveshare_epd`-Bibliothek)
+überspringt es den eigentlichen Panel-Push einfach und meldet das nur, was
+sich z. B. eignet, um die Seitenumschaltung selbst zu testen (`.display_page_state`
+zwischen den Aufrufen anschauen):
+
+```sh
+.venv/bin/python display_cycle.py
+.venv/bin/python display_cycle.py   # nächster Aufruf schaltet auf die andere Seite
 ```
 
 Das Wetter im Header wird standardmäßig über den öffentlichen Internetzugang
@@ -477,16 +539,37 @@ GPS-Punkt der aktuellen Strava-Fahrt verwendet.
 
 ### `main.py`
 
-Kein importierbares Modul, sondern das ausführbare Skript. Ablauf beim Start
-(`if __name__ == "__main__"`):
+Kein importierbares Modul, sondern das ausführbare Skript, das die
+Strava-Daten holt und beide Dashboard-Seiten rendert. Fasst das Display
+selbst nicht an (siehe [`display_cycle.py`](#display_cyclepy)). Ablauf beim
+Start (`if __name__ == "__main__"`):
 
 1. `.env` laden.
 2. Falls kein Token vorhanden: `api_setup()` (interaktiver OAuth-Flow).
 3. Falls Token abgelaufen: `refresh_api_access()`.
 4. `get_dashboard_data(client)` aufrufen.
 5. `dashboard_data["release_label"] = get_release_label()` setzen (siehe [`backend/version.py`](#backendversionpy)).
-6. `render_dashboard(data, output_path=OUTPUT_PATH)` aufrufen → schreibt `output/dashboard.png`.
-7. Falls `STRAVA_UPDATE_DISPLAY=1`: `update_display_from_file(OUTPUT_PATH)` aufrufen.
+6. Für jede Seite (`page` 1 und 2, siehe `TOTAL_PAGES` in
+   [`display/display.py`](#displaydisplaypy)) `render_dashboard(data,
+   output_path=..., page=page)` aufrufen → schreibt
+   `output/dashboard_page1.png` und `output/dashboard_page2.png`.
+
+### `display_cycle.py`
+
+Ebenfalls kein importierbares Modul, sondern ein zweites, unabhängiges
+ausführbares Skript. Ruft keine Strava-API auf und braucht daher kein
+gültiges Token – nur die von `main.py` bereits gerenderten PNGs. Ablauf beim
+Start (`if __name__ == "__main__"`):
+
+1. `.env` laden (nur für `STRAVA_UPDATE_DISPLAY`).
+2. `next_page()`: liest die zuletzt gezeigte Seite aus `.display_page_state`,
+   schaltet auf die jeweils andere um (1 ↔ 2 bei `TOTAL_PAGES = 2`) und
+   schreibt den neuen Wert zurück. Fehlt die Datei oder ist sie kein gültiger
+   Wert, wird bei Seite 1 gestartet.
+3. Falls `output/dashboard_page{N}.png` für die ermittelte Seite noch nicht
+   existiert (main.py ist noch nie gelaufen): Meldung, kein Fehler.
+4. Falls `STRAVA_UPDATE_DISPLAY=1`: `update_display_from_file(page_path)`
+   aufrufen, sonst nur eine Info-Meldung ausgeben.
 
 ---
 
@@ -516,7 +599,9 @@ Erneuert ein abgelaufenes Access-Token per Refresh-Token und aktualisiert
 
 Liefert die letzten `n` Aktivitäten (neueste zuerst) als vereinfachte Dicts
 (`id`, `name`, `date`, `sport_type`, `distance_km`, `moving_time_min`,
-`elevation_gain_m`, `average_watts`, `average_speed_kmh`).
+`elevation_gain_m`, `average_watts`, `average_heartrate`, `average_speed_kmh`,
+`kudos_count`). Seite 2 des Dashboards (siehe
+[`draw_activity_table()`](#displaydisplaypy)) zeigt hiervon bis zu 6 Zeilen.
 
 - **Parameter:** `n` – Anzahl der Aktivitäten.
 
@@ -527,6 +612,13 @@ Holt alle vom Dashboard benötigten Streams (`latlng`, `altitude`, `time`,
 das genau einmal für die letzte Aktivität auf und reicht das Ergebnis an
 `get_last_activity_route()` und `get_best_power_efforts()` weiter, statt dass
 jede Funktion ihre eigenen Streams (und die Aktivität selbst) separat abruft.
+
+#### `get_current_month_training_days(client: stravalib.Client) -> list[int]`
+
+Liefert die Tage (1–31) des aktuellen Kalendermonats, an denen mindestens
+eine Aktivität (beliebiger Sportart) stattfand – die Grundlage für die
+farbig markierten Felder im Monats-Kalender auf Seite 2 (siehe
+`draw_month_calendar()`).
 
 #### `get_last_activity_route(streams: dict) -> list[tuple[float, float, float | None]]`
 
@@ -552,7 +644,7 @@ bei unregelmäßiger Aufzeichnungsrate). Ergebnis z. B. `{60: 245, 20: 268, 5: 3
 
 - **Rückgabe:** `None` für eine Dauer, die die Aktivität nicht erreicht, oder wenn gar keine Leistungsdaten vorhanden sind.
 
-#### `get_dashboard_data(client: stravalib.Client, n_recent: int = 1) -> dict`
+#### `get_dashboard_data(client: stravalib.Client, n_recent: int = 6) -> dict`
 
 **Haupteinstiegspunkt** des Moduls – bündelt alle obigen Abrufe zu genau dem
 Dict, das `display.render_dashboard()` erwartet:
@@ -564,6 +656,7 @@ Dict, das `display.render_dashboard()` erwartet:
     "last_activity": dict | None,          # siehe get_recent_activities()
     "recent_activities": list[dict],
     "weekly_cycling_distance": list[dict], # siehe get_weekly_cycling_distance()
+    "training_days_this_month": list[int], # siehe get_current_month_training_days()
     "last_activity_route": list[tuple[float, float, float | None]],
     "best_power_efforts": dict,            # siehe get_best_power_efforts()
     "power_metrics": dict,                 # siehe get_power_metrics()
@@ -700,6 +793,38 @@ Rutsch. So kann ein Block schwarzen Titel, orange Zahl und schwarzen
 Untertitel gemeinsam sauber quantisieren. Basis der drei Stat-Blöcke
 (Distanz, Höhenmeter, Bestleistungen) in der rechten Spalte.
 
+#### `format_pace_min_per_km(average_speed_kmh: float | None) -> str`
+
+Rechnet eine km/h-Durchschnittsgeschwindigkeit in eine Lauf-Pace
+`"M:SS /km"` um (z. B. `28.4` km/h → `"2:07 /km"`). `"-"` bei `None`/`0`.
+
+#### `draw_activity_table(display, pal_img, anchor, size, activities: list[dict], max_rows=6) -> None`
+
+Zeichnet die Aktivitätstabelle von Seite 2: pro Zeile Icon (Rennrad, MTB
+oder Laufschuh, je nach `sport_type` – siehe `_activity_icon_filename()`),
+Distanz, Durchschnittsgeschwindigkeit (`average_speed_kmh` als km/h bei
+Rad-Aktivitäten, sonst über `format_pace_min_per_km()` als Pace) und
+Durchschnittsleistung (`average_watts`) bzw. bei Läufen Durchschnittspuls
+(`average_heartrate`). Zeilen über `len(activities)` hinaus (bis `max_rows`)
+bleiben leer; ein heller Trennstrich (`draw_light_divider()`) trennt
+aufeinanderfolgende Zeilen.
+
+#### `draw_month_calendar(display, pal_img, anchor, size, year: int, month: int, training_days: set[int]) -> None`
+
+Zeichnet den schematischen Monats-Kalender rechts auf Seite 2: eine
+Mo–So-Kopfzeile plus ein Feld pro Tag, angeordnet wie ein echter
+Kalendermonat (`calendar.monthrange()` liefert den Wochentag des 1., der
+dessen Spalte bestimmt – ein Monat, der mit einem Sonntag beginnt, startet
+entsprechend ganz rechts). Tage in `training_days` (1–31, siehe
+`get_current_month_training_days()`) bekommen eine Strava-orange Füllung,
+alle anderen nur einen dünnen Rahmen.
+
+#### `draw_page_indicator(display, pal_img, center, current_page: int, total_pages=2, radius=4, gap=8) -> None`
+
+Zeichnet die kleinen Seiten-Punkte unten mittig: `total_pages` Kreise,
+zentriert auf `center`, der 0-indexierte `current_page`-Kreis Strava-orange
+gefüllt, alle anderen hohl.
+
 #### `format_duration(minutes: float) -> str`
 
 Formatiert Minuten als `"1h 05min"` bzw. `"45min"`.
@@ -714,22 +839,28 @@ Formatiert ein Datum ohne Abhängigkeit von der `de_DE`-Systemlocale
 Tageszeitabhängige Begrüßung ("Guten Morgen" / "Guten Tag" / "Guten Abend" /
 "Gute Nacht" / "Hallo").
 
-#### `make_gui(data: dict) -> Image`
+#### `make_gui(data: dict, page: int = 1) -> Image`
 
-Baut das komplette Dashboard-Layout (Header mit Logo/Gruß/Datum,
-Aktivitäts-Titel, Stat-Chips, Leistungs-Chips, Routen-Karte und
-Höhenprofil links; Jahres-Distanz, Höhenmeter, Bestleistungen rechts)
-aus dem `data`-Dict (Format siehe
-[`get_dashboard_data()`](#get_dashboard_dataclient-stravalibclient-n_recent-int--1---dict)).
-Zeichnet außerdem `data["release_label"]` (siehe
+Baut das komplette Layout einer Dashboard-Seite aus dem `data`-Dict (Format
+siehe
+[`get_dashboard_data()`](#get_dashboard_dataclient-stravalibclient-n_recent-int--6---dict)).
+Header (Logo/Gruß/Datum/Wetter) sowie Versions-Label und Seiten-Indikator
+unten sind auf beiden Seiten identisch; der Inhalt dazwischen kommt je nach
+`page` von `draw_page1()` (`page=1`, Standard: Aktivitäts-Titel, Stat-Chips,
+Leistungs-Chips, Routen-Karte und Höhenprofil links, Jahres-Distanz/
+Höhenmeter/Bestleistungen rechts) oder `draw_page2()` (`page=2`: Tabelle der
+letzten Aktivitäten links (siehe `draw_activity_table()`), Monats-Kalender
+des aktuellen Monats rechts (siehe `draw_month_calendar()`)). Zeichnet
+außerdem `data["release_label"]` (siehe
 [`backend/version.py`](#backendversionpy)) klein unten links in den Rand;
 zu lange Labels werden auf die verfügbare Breite gekürzt (`…`-Suffix).
 
-#### `render_dashboard(data: dict, output_path: str | None = None) -> Image`
+#### `render_dashboard(data: dict, output_path: str | None = None, page: int = 1) -> Image`
 
-**Öffentlicher Haupteinstiegspunkt** des Moduls: ruft `make_gui(data)` auf
-und speichert das Ergebnis optional als PNG (`RGB`-konvertiert) unter
-`output_path`.
+**Öffentlicher Haupteinstiegspunkt** des Moduls: ruft `make_gui(data,
+page=page)` auf und speichert das Ergebnis optional als PNG
+(`RGB`-konvertiert) unter `output_path`. `main.py` ruft das einmal pro Seite
+(`1` bis `TOTAL_PAGES`) auf.
 
 *(Interne Hilfsfunktionen `_select_font`, `_project_route_points`,
 `_haversine_km`, `_classify_climbs` sind nicht Teil der öffentlichen API.)*

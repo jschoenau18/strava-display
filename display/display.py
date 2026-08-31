@@ -2,6 +2,7 @@ from __future__ import annotations
 from PIL import Image, ImageDraw, ImageFont
 from datetime import datetime
 from pathlib import Path
+import calendar
 import math
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -27,6 +28,7 @@ SPECTRA6_COLORS = SPECTRA6_COLORS + [0] * (768 - len(SPECTRA6_COLORS))
 TRANSPARENT_INDEX = 6
 
 DISPLAY_SIZE = (600, 400)
+TOTAL_PAGES = 2
 
 EARTH_CIRCUMFERENCE_KM = 40075
 EVEREST_HEIGHT_M = 8849
@@ -575,6 +577,208 @@ def draw_weekly_distance_chart(display : Display,
     quantized = to_spectra6(overlay, pal_img)
     paste_with_transparency(display.image, quantized, anchor)
 
+ACTIVITY_ICON_BY_SPORT_TYPE = {
+    "MountainBikeRide": "MTB-icon.png.jpeg",
+    "EMountainBikeRide": "MTB-icon.png.jpeg",
+}
+
+def _activity_icon_filename(sport_type : str | None) -> str:
+
+    """
+    Maps a Strava sport_type to one of the activity icons in img/.
+    Falls back to the road bike icon for any cycling-ish type not
+    explicitly listed (e-bike, gravel, virtual ride, ...).
+    """
+
+    sport_type = sport_type or ""
+    if sport_type in ACTIVITY_ICON_BY_SPORT_TYPE:
+        return ACTIVITY_ICON_BY_SPORT_TYPE[sport_type]
+    if "Run" in sport_type:
+        return "running-shoe-icon.jpg"
+    if "Mountain" in sport_type:
+        return "MTB-icon.png.jpeg"
+
+    return "Roadbike-icon.jpg"
+
+def format_pace_min_per_km(average_speed_kmh : float | None) -> str:
+
+    """
+    Converts a km/h average speed into a "M:SS /km" running pace string.
+    """
+
+    if not average_speed_kmh:
+        return "-"
+
+    pace_min_per_km = 60 / average_speed_kmh
+    minutes = int(pace_min_per_km)
+    seconds = round((pace_min_per_km - minutes) * 60)
+    if seconds == 60:
+        minutes += 1
+        seconds = 0
+
+    return f"{minutes}:{seconds:02d} /km"
+
+def draw_activity_table(display : Display,
+                         pal_img : Image.Image,
+                         anchor : tuple[int, int],
+                         size : tuple[int, int],
+                         activities : list[dict],
+                         max_rows : int = 6) -> None:
+
+    """
+    Draws a table of recent activities: activity icon, distance, average
+    speed (km/h for rides, min/km pace for runs) and average power for
+    rides / average heart rate for runs. Rows beyond the given
+    activities list are left blank.
+    """
+
+    x0, y0 = anchor
+    w, h = size
+    row_h = h / max_rows
+
+    icon_col_w = w * 0.16
+    distance_col_w = w * 0.24
+    speed_col_w = w * 0.30
+    last_col_w = w - icon_col_w - distance_col_w - speed_col_w
+
+    icon_col_x = x0
+    distance_col_x = icon_col_x + icon_col_w
+    speed_col_x = distance_col_x + distance_col_w
+    last_col_x = speed_col_x + speed_col_w
+
+    value_font = _select_font(15, False, True)
+    icon_cache : dict[str, Image.Image] = {}
+
+    for i in range(min(max_rows, len(activities))):
+
+        row_y = y0 + i * row_h
+        row_center_y = row_y + row_h / 2
+
+        if i > 0:
+            draw_light_divider(display, x0 + w / 2, row_y, w)
+
+        activity = activities[i]
+        sport_type = activity.get("sport_type")
+        is_run = "Run" in (sport_type or "")
+
+        icon_filename = _activity_icon_filename(sport_type)
+        if icon_filename not in icon_cache:
+            icon_cache[icon_filename] = load_icon(pal_img, icon_filename)
+        icon = icon_cache[icon_filename]
+
+        icon_h = min(row_h * 0.6, 26)
+        icon_w = int(icon_h * icon.width / icon.height)
+        icon_resized = icon.resize((icon_w, int(icon_h)))
+        paste_with_transparency(display.image, icon_resized, (
+            int(icon_col_x + (icon_col_w - icon_w) / 2),
+            int(row_center_y - icon_h / 2),
+        ))
+
+        distance_text = f"{activity.get('distance_km', 0):.1f} km"
+        display.draw.text((distance_col_x + distance_col_w / 2, row_center_y), distance_text, fill = BLACK, font = value_font, anchor = "mm")
+
+        avg_speed = activity.get("average_speed_kmh")
+        if is_run:
+            speed_text = format_pace_min_per_km(avg_speed)
+        else:
+            speed_text = f"{avg_speed:.1f} km/h" if avg_speed is not None else "-"
+        display.draw.text((speed_col_x + speed_col_w / 2, row_center_y), speed_text, fill = BLACK, font = value_font, anchor = "mm")
+
+        if is_run:
+            heartrate = activity.get("average_heartrate")
+            last_text = f"{heartrate} bpm" if heartrate is not None else "-"
+        else:
+            watts = activity.get("average_watts")
+            last_text = f"{watts} W" if watts is not None else "-"
+        display.draw.text((last_col_x + last_col_w / 2, row_center_y), last_text, fill = BLACK, font = value_font, anchor = "mm")
+
+def draw_month_calendar(display : Display,
+                         pal_img : Image.Image,
+                         anchor : tuple[int, int],
+                         size : tuple[int, int],
+                         year : int,
+                         month : int,
+                         training_days : set[int]) -> None:
+
+    """
+    Draws a schematic month calendar: a Mo-So header row plus one cell per
+    day of the month, laid out exactly like a real calendar page (the
+    weekday of the 1st determines its column, e.g. a Sunday-first month
+    starts in the rightmost column). Days in `training_days` (1-31) get a
+    Strava-orange fill.
+    """
+
+    overlay = Image.new("RGBA", size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+
+    weekday_font = _select_font(9, False, True)
+    day_font = _select_font(11, False, True)
+    weekday_labels = ["Mo", "Di", "Mi", "Do", "Fr", "Sa", "So"]
+
+    # calendar.monthrange() GIBT DEN WOCHENTAG DES 1. (MONTAG=0 ... SONNTAG=6)
+    # UND DIE ANZAHL TAGE DES MONATS ZURÜCK.
+    first_weekday, days_in_month = calendar.monthrange(year, month)
+
+    cell_w = size[0] / 7
+    weekday_row_h = 14
+    grid_y0 = weekday_row_h
+    num_rows = -(-(first_weekday + days_in_month) // 7)  # CEIL-DIVISION
+    cell_h = (size[1] - grid_y0) / num_rows
+
+    for col, label in enumerate(weekday_labels):
+        cx = col * cell_w + cell_w / 2
+        overlay_draw.text((cx, weekday_row_h / 2), label, fill = (0, 0, 0, 255), font = weekday_font, anchor = "mm")
+
+    for day in range(1, days_in_month + 1):
+        idx = first_weekday + day - 1
+        row, col = divmod(idx, 7)
+        x0 = col * cell_w + 2
+        y0 = grid_y0 + row * cell_h + 2
+        x1 = (col + 1) * cell_w - 2
+        y1 = grid_y0 + (row + 1) * cell_h - 2
+
+        if day in training_days:
+            overlay_draw.rectangle((x0, y0, x1, y1), fill = STRAVA_ORANGE, outline = (0, 0, 0, 255), width = 1)
+        else:
+            overlay_draw.rectangle((x0, y0, x1, y1), outline = (0, 0, 0, 255), width = 1)
+        overlay_draw.text(((x0 + x1) / 2, (y0 + y1) / 2), str(day), fill = (0, 0, 0, 255), font = day_font, anchor = "mm")
+
+    quantized = to_spectra6(overlay, pal_img)
+    paste_with_transparency(display.image, quantized, anchor)
+
+def draw_page_indicator(display : Display,
+                         pal_img : Image.Image,
+                         center : tuple[float, float],
+                         current_page : int,
+                         total_pages : int = 2,
+                         radius : int = 4,
+                         gap : int = 8) -> None:
+
+    """
+    Draws a row of small dots centered on `center` (0-indexed
+    current_page filled Strava-orange, the rest hollow) - a page
+    indicator for the multi-page dashboard.
+    """
+
+    padding = 2
+    width = total_pages * radius * 2 + (total_pages - 1) * gap + 2 * padding
+    height = radius * 2 + 2 * padding
+
+    overlay = Image.new("RGBA", (width, height), (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+
+    cy = height / 2
+    for i in range(total_pages):
+        cx = padding + radius + i * (radius * 2 + gap)
+        bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
+        if i == current_page:
+            overlay_draw.ellipse(bbox, fill = STRAVA_ORANGE, outline = (0, 0, 0, 255), width = 1)
+        else:
+            overlay_draw.ellipse(bbox, fill = (255, 255, 255, 255), outline = (0, 0, 0, 255), width = 1)
+
+    quantized = to_spectra6(overlay, pal_img)
+    paste_with_transparency(display.image, quantized, (int(center[0] - width / 2), int(center[1] - height / 2)))
+
 def format_duration(minutes : float) -> str:
 
     total_minutes = int(round(minutes))
@@ -625,7 +829,7 @@ def generate_greeting() -> str:
 # FUNKTION, DIE AUS DER MAIN AUFGERUFEN WIRD
 # BRAUCHT DIE API DATEN AUS backend.api_reader.get_dashboard_data()
 
-def make_gui(data : dict) -> Image.Image:
+def make_gui(data : dict, page : int = 1) -> Image.Image:
 
 
     display = Display()
@@ -705,6 +909,34 @@ def make_gui(data : dict) -> Image.Image:
     # LAYOUT
     content_y = HEADER_H + GAP
     content_h = display.size[1] - content_y - MARGIN
+
+    if page == 2:
+        draw_page2(display, pal_img, data, content_y, content_h, MARGIN, GAP, LABEL_H)
+    else:
+        draw_page1(display, pal_img, data, content_y, content_h, MARGIN, GAP, LABEL_H)
+
+    # VERSIONS-LABEL UNTEN LINKS, IM RAND UNTER DEM INHALTSBEREICH
+    release_label = data.get("release_label") or "v?.?.?"
+    release_font = _select_font(10, False, True)
+    max_label_w = display.size[0] - 2 * MARGIN
+    while release_font.getlength(release_label) > max_label_w and len(release_label) > 1:
+        release_label = release_label[:-2] + "…"
+    display.draw.text((MARGIN, display.size[1] - MARGIN / 2), release_label, fill = BLACK, font = release_font, anchor = "lm")
+
+    # SEITEN-INDIKATOR, MITTIG UNTEN, ETWAS ÜBER DER VERSIONS-ZEILE
+    draw_page_indicator(display, pal_img, (display.size[0] / 2, display.size[1] - MARGIN - 6), current_page = page - 1, total_pages = TOTAL_PAGES)
+
+    return display.image
+
+def draw_page1(display : Display,
+                pal_img : Image.Image,
+                data : dict,
+                content_y : int,
+                content_h : int,
+                MARGIN : int,
+                GAP : int,
+                LABEL_H : int) -> None:
+
     left_w = int((display.size[0] - 2 * MARGIN - GAP) * 0.58)
     right_x = MARGIN + left_w + GAP
     right_w = display.size[0] - MARGIN - right_x
@@ -837,24 +1069,49 @@ def make_gui(data : dict) -> Image.Image:
 
     draw_weekly_distance_chart(display, pal_img, (right_x, y), (right_w, block_h), data.get("weekly_cycling_distance") or [])
 
-    # VERSIONS-LABEL UNTEN LINKS, IM RAND UNTER DEM INHALTSBEREICH
-    release_label = data.get("release_label") or "v?.?.?"
-    release_font = _select_font(10, False, True)
-    max_label_w = display.size[0] - 2 * MARGIN
-    while release_font.getlength(release_label) > max_label_w and len(release_label) > 1:
-        release_label = release_label[:-2] + "…"
-    display.draw.text((MARGIN, display.size[1] - MARGIN / 2), release_label, fill = BLACK, font = release_font, anchor = "lm")
+def draw_page2(display : Display,
+                pal_img : Image.Image,
+                data : dict,
+                content_y : int,
+                content_h : int,
+                MARGIN : int,
+                GAP : int,
+                LABEL_H : int) -> None:
 
-    return display.image
+    # LINKES DRITTEL (CA. 2/3 DER BREITE): TABELLE MIT DEN LETZTEN AKTIVITÄTEN.
+    # RECHTES DRITTEL: KALENDERANSICHT DES AKTUELLEN MONATS.
+    left_w = int((display.size[0] - 2 * MARGIN - GAP) * (2 / 3))
+    right_x = MARGIN + left_w + GAP
+    right_w = display.size[0] - MARGIN - right_x
 
-def render_dashboard(data : dict, output_path : str | None = None) -> Image.Image:
+    left_label = GUIBox((left_w, LABEL_H), (MARGIN, content_y), WHITE)
+    left_label.add_text("LETZTE AKTIVITÄTEN", (0.5, 0.5), BLACK, fontsize = 20, bold = True, anchor = "mm")
+    left_label.draw_box(display.draw)
+
+    rows_y = content_y + LABEL_H + GAP // 2
+    rows_h = content_h - LABEL_H - GAP // 2
+
+    recent_activities = data.get("recent_activities") or []
+    draw_activity_table(display, pal_img, (MARGIN, rows_y), (left_w, rows_h), recent_activities)
+
+    now = datetime.now()
+    month_label = GUIBox((right_w, LABEL_H), (right_x, content_y), WHITE)
+    month_label.add_text(f"{GERMAN_MONTHS[now.month - 1].upper()} {now.year}", (0.5, 0.5), BLACK, fontsize = 16, bold = True, condensed = True, anchor = "mm")
+    month_label.draw_box(display.draw)
+
+    calendar_y = content_y + LABEL_H + GAP // 2
+    calendar_h = content_h - LABEL_H - GAP // 2
+    training_days = set(data.get("training_days_this_month") or [])
+    draw_month_calendar(display, pal_img, (right_x, calendar_y), (right_w, calendar_h), now.year, now.month, training_days)
+
+def render_dashboard(data : dict, output_path : str | None = None, page : int = 1) -> Image.Image:
 
     """
     Builds the dashboard image from the given data dict (see
     backend.api_reader.get_dashboard_data) and optionally saves it to disk.
     """
 
-    image = make_gui(data)
+    image = make_gui(data, page = page)
 
     if output_path is not None:
         image.convert("RGB").save(output_path)

@@ -4,17 +4,17 @@ import os
 import time
 from backend.api_reader import api_setup, refresh_api_access, get_dashboard_data
 from backend.version import get_release_label
-from display.display import render_dashboard
-from display.eink import update_display_from_file
+from display.display import render_dashboard, TOTAL_PAGES
 
-OUTPUT_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output", "dashboard.png")
+OUTPUT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+PAGE_OUTPUT_PATHS = [os.path.join(OUTPUT_DIR, f"dashboard_page{page}.png") for page in range(1, TOTAL_PAGES + 1)]
 
 if __name__ == "__main__":
 
     current_dir = os.path.dirname(os.path.abspath(__file__))
     dotenv_path = os.path.join(current_dir, '.env')
     load_dotenv(dotenv_path=dotenv_path)
-    
+
     if "STRAVA_EXPIRES_AT" in os.environ:
         print("✅ Benutzer verbunden!")
 
@@ -42,11 +42,10 @@ if __name__ == "__main__":
     dashboard_data = get_dashboard_data(client)
     dashboard_data["release_label"] = get_release_label()
 
-    os.makedirs(os.path.dirname(OUTPUT_PATH), exist_ok = True)
-    render_dashboard(dashboard_data, output_path = OUTPUT_PATH)
+    os.makedirs(OUTPUT_DIR, exist_ok = True)
+    for page, output_path in enumerate(PAGE_OUTPUT_PATHS, start = 1):
+        render_dashboard(dashboard_data, output_path = output_path, page = page)
 
-    if os.getenv("STRAVA_UPDATE_DISPLAY", "0") == "1":
-        update_display_from_file(OUTPUT_PATH)
-        print("✅ E-Paper-Display aktualisiert!")
-
-    print(f"✅ Dashboard gerendert: {OUTPUT_PATH}")
+    # display_cycle.py läuft alle 2 Minuten separat und wechselt zwischen
+    # den hier gerenderten Seiten hin und her (siehe dort).
+    print(f"✅ Dashboard-Seiten gerendert: {', '.join(PAGE_OUTPUT_PATHS)}")
