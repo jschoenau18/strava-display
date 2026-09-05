@@ -35,6 +35,12 @@ Versionierung nach [Semantic Versioning](https://semver.org/lang/de/).
   (`PIL.UnidentifiedImageError` bzw. `json.JSONDecodeError`).
 - Ein defekter/leerer Wetter-Standort-Cache wird beim Lesen abgefangen
   statt den gesamten Lauf abzubrechen.
+- `strava-update.service` setzte den Deploy-Key nicht: `Environment=GIT_SSH_COMMAND=ssh -i ... -o ...`
+  war ohne Anführungszeichen angegeben, wodurch systemd den Wert am
+  Leerzeichen in mehrere ungültige Einzel-Zuweisungen zerlegte
+  (`GIT_SSH_COMMAND` landete nur bei `ssh`, ohne `-i <key>`) – der
+  nächtliche Auto-Update-Timer schlug dadurch mit
+  `git@github.com: Permission denied (publickey)` fehl.
 
 ## [1.1.0] - 2026-08-31
 
