@@ -5,3 +5,5 @@ output/
 .dashboard.lock
 .display_page_state
 *.log
+.DS_Store
+display/.DS_Store
