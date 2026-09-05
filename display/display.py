@@ -28,6 +28,29 @@ SPECTRA6_COLORS = [
 SPECTRA6_COLORS = SPECTRA6_COLORS + [0] * (768 - len(SPECTRA6_COLORS))
 TRANSPARENT_INDEX = 6
 
+# Theme: INK is the foreground/text/line color, PAPER the background -
+# both as palette indices (for draw calls on the display's 'P'-mode image)
+# and as their RGBA equivalents (for the transparent overlays quantized via
+# to_spectra6). Every draw_* function below reads these as module globals
+# instead of taking a theme argument, since a render always happens
+# sequentially in one thread (main.py never renders two pages at once) -
+# make_gui() calls _set_theme() once at the start of each render to flip
+# them for STRAVA_DARK_MODE. Accent colors (STRAVA_ORANGE, RED, YELLOW,
+# BLUE, GREEN) are unaffected by the theme.
+INK, PAPER = BLACK, WHITE
+INK_RGBA, PAPER_RGBA = (0, 0, 0, 255), (255, 255, 255, 255)
+
+def _set_theme(dark_mode : bool) -> None:
+
+    global INK, PAPER, INK_RGBA, PAPER_RGBA
+
+    if dark_mode:
+        INK, PAPER = WHITE, BLACK
+        INK_RGBA, PAPER_RGBA = (255, 255, 255, 255), (0, 0, 0, 255)
+    else:
+        INK, PAPER = BLACK, WHITE
+        INK_RGBA, PAPER_RGBA = (0, 0, 0, 255), (255, 255, 255, 255)
+
 DISPLAY_SIZE = (600, 400)
 TOTAL_PAGES = 2
 
@@ -43,7 +66,7 @@ class Display:
         self.size = size
         self.colors = colors
 
-        self.image : Image.Image = Image.new('P', self.size, color = 1) #fixed color palette for e ink, white backgroud
+        self.image : Image.Image = Image.new('P', self.size, color = PAPER)  # fixed color palette for e ink, background per current theme
         self.draw = ImageDraw.Draw(self.image, mode = 'P')
         self.image.putpalette(self.colors)
 
@@ -194,15 +217,18 @@ def draw_light_divider(display : Display, center_x : float, y : int, width : int
     header accent line) centered horizontally on center_x.
     """
 
-    divider = GUIBox((width, thickness), (int(center_x - width / 2), y), WHITE)
-    divider.draw_dithered(display.draw, BLACK, WHITE, dither_count = 2)
+    divider = GUIBox((width, thickness), (int(center_x - width / 2), y), PAPER)
+    divider.draw_dithered(display.draw, INK, PAPER, dither_count = 2)
 
-def draw_vertical_divider(display : Display, x : int, center_y : float, height : int, thickness : int = 2, color : int = BLACK) -> None:
+def draw_vertical_divider(display : Display, x : int, center_y : float, height : int, thickness : int = 2, color : int | None = None) -> None:
 
     """
     Draws a solid vertical divider line of the given height, centered on
     center_y.
     """
+
+    if color is None:
+        color = INK  # resolved at call time, not def time - INK can change per render (dark mode)
 
     display.draw.line((x, center_y - height / 2, x, center_y + height / 2), fill = color, width = thickness)
 
@@ -240,7 +266,7 @@ def draw_icon_value(display : Display,
 
 HEART_ICON_KEY = "__heart__"
 
-def make_heart_icon(pal_img : Image.Image, size : int = 64, fill : tuple[int, int, int, int] = (0, 0, 0, 255)) -> Image.Image:
+def make_heart_icon(pal_img : Image.Image, size : int = 64, fill : tuple[int, int, int, int] | None = None) -> Image.Image:
 
     """
     Draws a small filled heart (two overlapping circles + a triangle,
@@ -248,6 +274,9 @@ def make_heart_icon(pal_img : Image.Image, size : int = 64, fill : tuple[int, in
     to the e-ink palette - used for the average-heart-rate stat chip
     since there's no heart icon image asset.
     """
+
+    if fill is None:
+        fill = INK_RGBA  # resolved at call time, not def time - INK_RGBA can change per render (dark mode)
 
     overlay = Image.new("RGBA", (size, size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
@@ -285,16 +314,16 @@ def draw_weather_icon(display : Display, anchor : tuple[int, int], state : str, 
         ):
             draw.line((*start, *end), fill = STRAVA_ORANGE, width = 1)
     else:
-        draw.ellipse((x + 2, y + 8, x + 14, y + 18), fill = BLACK)
-        draw.ellipse((x + 8, y + 4, x + 19, y + 18), fill = BLACK)
-        draw.rectangle((x + 7, y + 12, x + 21, y + 18), fill = BLACK)
+        draw.ellipse((x + 2, y + 8, x + 14, y + 18), fill = INK)
+        draw.ellipse((x + 8, y + 4, x + 19, y + 18), fill = INK)
+        draw.rectangle((x + 7, y + 12, x + 21, y + 18), fill = INK)
         if state == "rain":
             draw.line((x + 8, y + 21, x + 6, y + size), fill = BLUE, width = 2)
             draw.line((x + 15, y + 21, x + 13, y + size), fill = BLUE, width = 2)
         elif state == "showers":
             draw.line((x + 11, y + 21, x + 9, y + size), fill = BLUE, width = 2)
 
-def draw_wind_arrow(display : Display, anchor : tuple[int, int], degrees : float, size : int = 18, color : int = BLACK) -> None:
+def draw_wind_arrow(display : Display, anchor : tuple[int, int], degrees : float, size : int = 18, color : int | None = None) -> None:
 
     """
     Draws a bold arrow (thick shaft + filled triangular head) centered in
@@ -303,6 +332,9 @@ def draw_wind_arrow(display : Display, anchor : tuple[int, int], degrees : float
     Open-Meteo reports, 0=North/up, clockwise - so the arrow points the
     opposite way, degrees + 180).
     """
+
+    if color is None:
+        color = INK  # resolved at call time, not def time - INK can change per render (dark mode)
 
     draw = display.draw
     cx = anchor[0] + size / 2
@@ -401,7 +433,7 @@ def draw_route_map(display : Display,
         overlay_draw.line(pixel_points, fill = STRAVA_ORANGE, width = line_width, joint = "curve")
     else:
         font = ImageFont.truetype(FONT_REGULAR_CONDENSED, size = 13)
-        overlay_draw.text((size[0] / 2, size[1] / 2), "Keine GPS-Daten", fill = (0, 0, 0, 255), font = font, anchor = "mm")
+        overlay_draw.text((size[0] / 2, size[1] / 2), "Keine GPS-Daten", fill = INK_RGBA, font = font, anchor = "mm")
 
     quantized = to_spectra6(overlay, pal_img)
     paste_with_transparency(display.image, quantized, anchor)
@@ -480,7 +512,7 @@ def draw_elevation_profile(display : Display,
 
     if len(valid_points) < 2:
         font = ImageFont.truetype(FONT_REGULAR_CONDENSED, size = 13)
-        overlay_draw.text((size[0] / 2, size[1] / 2), "Keine Höhendaten", fill = (0, 0, 0, 255), font = font, anchor = "mm")
+        overlay_draw.text((size[0] / 2, size[1] / 2), "Keine Höhendaten", fill = INK_RGBA, font = font, anchor = "mm")
         quantized = to_spectra6(overlay, pal_img)
         paste_with_transparency(display.image, quantized, anchor)
         return
@@ -522,11 +554,11 @@ def draw_elevation_profile(display : Display,
         x1, y1 = pixel_points[i + 1]
         overlay_draw.polygon([(x0, chart_bottom), (x0, y0), (x1, y1), (x1, chart_bottom)], fill = STRAVA_ORANGE)
 
-    overlay_draw.line(pixel_points, fill = (0, 0, 0, 255), width = 2, joint = "curve")
-    overlay_draw.line((chart_left, chart_bottom, chart_right, chart_bottom), fill = (0, 0, 0, 255), width = 1)
+    overlay_draw.line(pixel_points, fill = INK_RGBA, width = 2, joint = "curve")
+    overlay_draw.line((chart_left, chart_bottom, chart_right, chart_bottom), fill = INK_RGBA, width = 1)
 
-    overlay_draw.text((chart_left - 4, chart_top), max_ele_text, fill = (0, 0, 0, 255), font = label_font, anchor = "rt")
-    overlay_draw.text((chart_left - 4, chart_bottom), min_ele_text, fill = (0, 0, 0, 255), font = label_font, anchor = "rs")
+    overlay_draw.text((chart_left - 4, chart_top), max_ele_text, fill = INK_RGBA, font = label_font, anchor = "rt")
+    overlay_draw.text((chart_left - 4, chart_bottom), min_ele_text, fill = INK_RGBA, font = label_font, anchor = "rs")
 
     quantized = to_spectra6(overlay, pal_img)
     paste_with_transparency(display.image, quantized, anchor)
@@ -570,7 +602,7 @@ def draw_weekly_distance_chart(display : Display,
 
     if not weekly_distances:
         placeholder_font = _select_font(13, False, True)
-        overlay_draw.text((size[0] / 2, size[1] / 2), "Keine Wochendaten", fill = (0, 0, 0, 255), font = placeholder_font, anchor = "mm")
+        overlay_draw.text((size[0] / 2, size[1] / 2), "Keine Wochendaten", fill = INK_RGBA, font = placeholder_font, anchor = "mm")
         quantized = to_spectra6(overlay, pal_img)
         paste_with_transparency(display.image, quantized, anchor)
         return
@@ -582,7 +614,7 @@ def draw_weekly_distance_chart(display : Display,
     chart_height = chart_bottom - chart_top
     km_label = Image.new("RGBA", (24, 42), (0, 0, 0, 0))
     km_label_draw = ImageDraw.Draw(km_label)
-    km_label_draw.text((12, 21), "KM", fill = (0, 0, 0, 255), font = km_font, anchor = "mm")
+    km_label_draw.text((12, 21), "KM", fill = INK_RGBA, font = km_font, anchor = "mm")
     km_label = km_label.rotate(90, expand = True)
     overlay.alpha_composite(km_label, (0, int((chart_top + chart_bottom - km_label.height) / 2)))
     max_distance = max((week.get("distance_km", 0) for week in weekly_distances), default = 0)
@@ -590,15 +622,15 @@ def draw_weekly_distance_chart(display : Display,
     bar_gap = 5
     bar_width = (chart_right - chart_left - bar_gap * (len(weekly_distances) - 1)) / len(weekly_distances) if weekly_distances else 0
 
-    overlay_draw.line((chart_left, chart_bottom, chart_right, chart_bottom), fill = (0, 0, 0, 255), width = 1)
+    overlay_draw.line((chart_left, chart_bottom, chart_right, chart_bottom), fill = INK_RGBA, width = 1)
     for i, week in enumerate(weekly_distances):
         distance = week.get("distance_km", 0)
         bar_x = chart_left + i * (bar_width + bar_gap)
         bar_h = chart_height * distance / max_distance
         bar_top = chart_bottom - bar_h
         overlay_draw.rectangle((bar_x, bar_top, bar_x + bar_width, chart_bottom), fill = STRAVA_ORANGE)
-        overlay_draw.text((bar_x + bar_width / 2, bar_top - 4), f"{distance:.1f}", fill = (0, 0, 0, 255), font = date_font, anchor = "ms")
-        overlay_draw.text((bar_x + bar_width / 2, size[1] - 7), week.get("label", ""), fill = (0, 0, 0, 255), font = date_font, anchor = "ms")
+        overlay_draw.text((bar_x + bar_width / 2, bar_top - 4), f"{distance:.1f}", fill = INK_RGBA, font = date_font, anchor = "ms")
+        overlay_draw.text((bar_x + bar_width / 2, size[1] - 7), week.get("label", ""), fill = INK_RGBA, font = date_font, anchor = "ms")
 
     quantized = to_spectra6(overlay, pal_img)
     paste_with_transparency(display.image, quantized, anchor)
@@ -681,7 +713,7 @@ def draw_activity_table(display : Display,
         row_center_y = row_y + row_h / 2
 
         if i > 0:
-            draw_light_divider(display, x0 + w / 2, row_y, w)
+            draw_light_divider(display, x0 + w / 2, int(row_y), w)
 
         activity = activities[i]
         sport_type = activity.get("sport_type")
@@ -701,14 +733,14 @@ def draw_activity_table(display : Display,
         ))
 
         distance_text = f"{activity.get('distance_km', 0):.1f} km"
-        display.draw.text((distance_col_x + distance_col_w / 2, row_center_y), distance_text, fill = BLACK, font = value_font, anchor = "mm")
+        display.draw.text((distance_col_x + distance_col_w / 2, row_center_y), distance_text, fill = INK, font = value_font, anchor = "mm")
 
         avg_speed = activity.get("average_speed_kmh")
         if is_run:
             speed_text = format_pace_min_per_km(avg_speed)
         else:
             speed_text = f"{avg_speed:.1f} km/h" if avg_speed is not None else "-"
-        display.draw.text((speed_col_x + speed_col_w / 2, row_center_y), speed_text, fill = BLACK, font = value_font, anchor = "mm")
+        display.draw.text((speed_col_x + speed_col_w / 2, row_center_y), speed_text, fill = INK, font = value_font, anchor = "mm")
 
         if is_run:
             heartrate = activity.get("average_heartrate")
@@ -716,7 +748,7 @@ def draw_activity_table(display : Display,
         else:
             watts = activity.get("average_watts")
             last_text = f"{watts} W" if watts is not None else "-"
-        display.draw.text((last_col_x + last_col_w / 2, row_center_y), last_text, fill = BLACK, font = value_font, anchor = "mm")
+        display.draw.text((last_col_x + last_col_w / 2, row_center_y), last_text, fill = INK, font = value_font, anchor = "mm")
 
 def draw_month_calendar(display : Display,
                          pal_img : Image.Image,
@@ -753,7 +785,7 @@ def draw_month_calendar(display : Display,
 
     for col, label in enumerate(weekday_labels):
         cx = col * cell_w + cell_w / 2
-        overlay_draw.text((cx, weekday_row_h / 2), label, fill = (0, 0, 0, 255), font = weekday_font, anchor = "mm")
+        overlay_draw.text((cx, weekday_row_h / 2), label, fill = INK_RGBA, font = weekday_font, anchor = "mm")
 
     for day in range(1, days_in_month + 1):
         idx = first_weekday + day - 1
@@ -764,10 +796,10 @@ def draw_month_calendar(display : Display,
         y1 = grid_y0 + (row + 1) * cell_h - 2
 
         if day in training_days:
-            overlay_draw.rectangle((x0, y0, x1, y1), fill = STRAVA_ORANGE, outline = (0, 0, 0, 255), width = 1)
+            overlay_draw.rectangle((x0, y0, x1, y1), fill = STRAVA_ORANGE, outline = INK_RGBA, width = 1)
         else:
-            overlay_draw.rectangle((x0, y0, x1, y1), outline = (0, 0, 0, 255), width = 1)
-        overlay_draw.text(((x0 + x1) / 2, (y0 + y1) / 2), str(day), fill = (0, 0, 0, 255), font = day_font, anchor = "mm")
+            overlay_draw.rectangle((x0, y0, x1, y1), outline = INK_RGBA, width = 1)
+        overlay_draw.text(((x0 + x1) / 2, (y0 + y1) / 2), str(day), fill = INK_RGBA, font = day_font, anchor = "mm")
 
     quantized = to_spectra6(overlay, pal_img)
     paste_with_transparency(display.image, quantized, anchor)
@@ -798,9 +830,9 @@ def draw_page_indicator(display : Display,
         cx = padding + radius + i * (radius * 2 + gap)
         bbox = (cx - radius, cy - radius, cx + radius, cy + radius)
         if i == current_page:
-            overlay_draw.ellipse(bbox, fill = STRAVA_ORANGE, outline = (0, 0, 0, 255), width = 1)
+            overlay_draw.ellipse(bbox, fill = STRAVA_ORANGE, outline = INK_RGBA, width = 1)
         else:
-            overlay_draw.ellipse(bbox, fill = (255, 255, 255, 255), outline = (0, 0, 0, 255), width = 1)
+            overlay_draw.ellipse(bbox, fill = PAPER_RGBA, outline = INK_RGBA, width = 1)
 
     quantized = to_spectra6(overlay, pal_img)
     paste_with_transparency(display.image, quantized, (int(center[0] - width / 2), int(center[1] - height / 2)))
@@ -871,8 +903,9 @@ def generate_greeting() -> str:
 # FUNKTION, DIE AUS DER MAIN AUFGERUFEN WIRD
 # BRAUCHT DIE API DATEN AUS backend.api_reader.get_dashboard_data()
 
-def make_gui(data : dict, page : int = 1, total_pages : int = TOTAL_PAGES) -> Image.Image:
+def make_gui(data : dict, page : int = 1, total_pages : int = TOTAL_PAGES, dark_mode : bool = False) -> Image.Image:
 
+    _set_theme(dark_mode)
 
     display = Display()
     pal_img = get_palette_image()
@@ -884,7 +917,7 @@ def make_gui(data : dict, page : int = 1, total_pages : int = TOTAL_PAGES) -> Im
     LABEL_H = 22
 
     # HEADER (weißer Grund, dünner farbiger Akzentstreifen statt voller Farbfläche)
-    header = GUIBox((display.size[0], HEADER_H), (0, 0), WHITE)
+    header = GUIBox((display.size[0], HEADER_H), (0, 0), PAPER)
 
     logo_h = 30
     logo_w = int(logo_h * logo.width / logo.height)
@@ -895,8 +928,8 @@ def make_gui(data : dict, page : int = 1, total_pages : int = TOTAL_PAGES) -> Im
     greeting = f"{generate_greeting()}, {athlete_name}!" if athlete_name else generate_greeting()
 
     text_x = (MARGIN + logo_w + 14) / header.size[0]
-    header.add_text(greeting, (text_x, 0.36), BLACK, fontsize = 20, bold = True, anchor = "lm")
-    header.add_text(format_german_date(datetime.now()), (text_x, 0.68), BLACK, fontsize = 12, condensed = True, anchor = "lm")
+    header.add_text(greeting, (text_x, 0.36), INK, fontsize = 20, bold = True, anchor = "lm")
+    header.add_text(format_german_date(datetime.now()), (text_x, 0.68), INK, fontsize = 12, condensed = True, anchor = "lm")
     header.draw_box(display.draw)
 
     weather = data.get("weather") or {}
@@ -927,14 +960,14 @@ def make_gui(data : dict, page : int = 1, total_pages : int = TOTAL_PAGES) -> Im
         wind_x1 = divider2_x - DIVIDER_PADDING
         wind_x0 = wind_x1 - wind_content_w
         if wind_direction_deg is not None:
-            draw_wind_arrow(display, (wind_x0, HEADER_H / 2 - wind_arrow_size / 2), wind_direction_deg, size = wind_arrow_size)
-            display.draw.text((wind_x0 + wind_arrow_size + wind_gap, HEADER_H / 2), wind_text, fill = BLACK, font = wind_font, anchor = "lm")
+            draw_wind_arrow(display, (int(wind_x0), int(HEADER_H / 2 - wind_arrow_size / 2)), wind_direction_deg, size = wind_arrow_size)
+            display.draw.text((wind_x0 + wind_arrow_size + wind_gap, HEADER_H / 2), wind_text, fill = INK, font = wind_font, anchor = "lm")
         else:
-            display.draw.text((wind_x0, HEADER_H / 2), wind_text, fill = BLACK, font = wind_font, anchor = "lm")
+            display.draw.text((wind_x0, HEADER_H / 2), wind_text, fill = INK, font = wind_font, anchor = "lm")
 
         divider1_x = wind_x0 - DIVIDER_PADDING
         temp_x1 = divider1_x - DIVIDER_PADDING
-        display.draw.text((temp_x1, HEADER_H / 2), f"{weather.get('temperature', '-')}°C", fill = BLACK, font = temp_font, anchor = "rm")
+        display.draw.text((temp_x1, HEADER_H / 2), f"{weather.get('temperature', '-')}°C", fill = INK, font = temp_font, anchor = "rm")
 
         # TRENNLINIEN SO HOCH WIE DIE (GRÖSSTE) SCHRIFT DER SPALTEN
         ascent, descent = temp_font.getmetrics()
@@ -942,8 +975,8 @@ def make_gui(data : dict, page : int = 1, total_pages : int = TOTAL_PAGES) -> Im
         draw_vertical_divider(display, int(divider1_x), HEADER_H / 2, divider_h)
         draw_vertical_divider(display, int(divider2_x), HEADER_H / 2, divider_h)
 
-    divider = GUIBox((display.size[0], 3), (0, HEADER_H - 3), WHITE)
-    divider.draw_dithered(display.draw, BLACK, WHITE, dither_count = 2)
+    divider = GUIBox((display.size[0], 3), (0, HEADER_H - 3), PAPER)
+    divider.draw_dithered(display.draw, INK, PAPER, dither_count = 2)
 
     logo_resized = logo.resize((logo_w, logo_h))
     paste_with_transparency(display.image, logo_resized, (MARGIN, (HEADER_H - logo_h) // 2))
@@ -969,7 +1002,7 @@ def make_gui(data : dict, page : int = 1, total_pages : int = TOTAL_PAGES) -> Im
     max_label_w = display.size[0] - 2 * MARGIN
     while release_font.getlength(release_label) > max_label_w and len(release_label) > 1:
         release_label = release_label[:-2] + "…"
-    display.draw.text((MARGIN, display.size[1] - MARGIN / 2), release_label, fill = BLACK, font = release_font, anchor = "lm")
+    display.draw.text((MARGIN, display.size[1] - MARGIN / 2), release_label, fill = INK, font = release_font, anchor = "lm")
 
     # SEITEN-INDIKATOR, MITTIG UNTEN, ETWAS ÜBER DER VERSIONS-ZEILE - NUR BEI MEHR ALS EINER SEITE
     if total_pages > 1:
@@ -1058,7 +1091,7 @@ def draw_page1(display : Display,
     last_act_name : str = last_act.get("name", "-") if recent else "Keine Aktivität"
     sport_type = last_act.get("sport_type") if recent else None
 
-    left_label = GUIBox((left_w, LABEL_H), (MARGIN, content_y), WHITE)
+    left_label = GUIBox((left_w, LABEL_H), (MARGIN, content_y), PAPER)
     left_label.draw_box(display.draw)
 
     # AKTIVITÄTS-ICON LINKS VOM TITEL, TITEL WIRD BEI PLATZMANGEL MIT "..." ABGESCHNITTEN
@@ -1075,12 +1108,12 @@ def draw_page1(display : Display,
     title_text_x1 = MARGIN + left_w - (KUDOS_RESERVED_W if recent else 6)
     title_font = _select_font(20, True, False)
     title_text = _truncate_to_width(last_act_name, title_font, title_text_x1 - title_text_x0)
-    display.draw.text((title_text_x0, content_y + LABEL_H / 2), title_text, fill = BLACK, font = title_font, anchor = "lm")
+    display.draw.text((title_text_x0, content_y + LABEL_H / 2), title_text, fill = INK, font = title_font, anchor = "lm")
 
     if recent:
         kudos_icon = load_icon(pal_img, "Kudos.bmp")
         kudos = recent[0].get("kudos_count", 0)
-        draw_icon_value(display, kudos_icon, (MARGIN + left_w - 62, content_y), 22, str(int(kudos)), BLACK, fontsize = 14)
+        draw_icon_value(display, kudos_icon, (MARGIN + left_w - 62, content_y), 22, str(int(kudos)), INK, fontsize = 14)
 
 
 
@@ -1088,7 +1121,7 @@ def draw_page1(display : Display,
 
     # INFO-BOX MIT DEN KENNZAHLEN DER LETZTEN AKTIVITÄT (GESCHWINDIGKEIT, HÖHENMETER, DISTANZ)
     INFO_BOX_H = layout["INFO_BOX_H"]
-    info_box = GUIBox((left_w, INFO_BOX_H), (MARGIN, rows_y), WHITE)
+    info_box = GUIBox((left_w, INFO_BOX_H), (MARGIN, rows_y), PAPER)
     info_box.draw_box(display.draw)
 
     avg_speed = last_act.get("average_speed_kmh")
@@ -1119,7 +1152,7 @@ def draw_page1(display : Display,
         icon = make_heart_icon(pal_img) if icon_filename == HEART_ICON_KEY else load_icon(pal_img, icon_filename)
         col_x = MARGIN + i * col_w
         icon_anchor = (col_x, rows_y + (INFO_BOX_H - icon_h) / 2)
-        draw_icon_value(display, icon, icon_anchor, icon_h, value_text, BLACK, fontsize = 18, center_in_width = col_w)
+        draw_icon_value(display, icon, icon_anchor, icon_h, value_text, INK, fontsize = 18, center_in_width = col_w)
 
     # POWER-CHIPS DIREKT UNTER DEN ANDEREN DREI KENNZAHLEN - NUR BEI RIDES MIT
     # VORHANDENEN POWER-DATEN. FEHLEN SIE (ODER IST ES EIN LAUF), ENTFÄLLT DIE
@@ -1140,7 +1173,7 @@ def draw_page1(display : Display,
             col_x = MARGIN + i * power_col_w
             icon_anchor = (col_x, power_box_y + (power_box_h - icon_h) / 2)
             value_text = str(int(value)) if value is not None else "-"
-            draw_icon_value(display, icon, icon_anchor, icon_h, value_text, BLACK, fontsize = 18, center_in_width = power_col_w)
+            draw_icon_value(display, icon, icon_anchor, icon_h, value_text, INK, fontsize = 18, center_in_width = power_col_w)
 
     # ROUTEN-KARTE MIT HÖHENPROFIL DARUNTER - HÖHENPROFIL BLEIBT FIX, DIE
     # ROUTEN-KARTE BEKOMMT DEN GESAMTEN DURCH DIE ENGEREN (ODER FEHLENDEN)
@@ -1161,8 +1194,8 @@ def draw_page1(display : Display,
     earth_pct = ytd_distance_km / EARTH_CIRCUMFERENCE_KM * 100
     everest_x = ytd_elevation_m / EVEREST_HEIGHT_M
 
-    right_label = GUIBox((right_w, LABEL_H), (right_x, content_y), WHITE)
-    right_label.add_text("DIESES JAHR", (0.5, 0.5), BLACK, fontsize = 20, bold = True, anchor = "mm")
+    right_label = GUIBox((right_w, LABEL_H), (right_x, content_y), PAPER)
+    right_label.add_text("DIESES JAHR", (0.5, 0.5), INK, fontsize = 20, bold = True, anchor = "mm")
     right_label.draw_box(display.draw)
 
     N_BLOCKS = 3
@@ -1179,9 +1212,9 @@ def draw_page1(display : Display,
     y = stat_area_y
 
     render_stat_block(display, pal_img, (right_x, y), (right_w, block_h), [
-        {"text": "GESAMTDISTANZ", "rel_pos": (0.5, 0.18), "color": (0, 0, 0, 255), "fontsize": 16, "bold": False},
+        {"text": "GESAMTDISTANZ", "rel_pos": (0.5, 0.18), "color": INK_RGBA, "fontsize": 16, "bold": False},
         {"text": f"{ytd_distance_km:.1f} km", "rel_pos": (0.5, 0.54), "color": STRAVA_ORANGE, "fontsize": 26},
-        {"text": f"{earth_pct:.2f}% der Erdumrundung", "rel_pos": (0.5, 0.84), "color": (0, 0, 0, 255), "fontsize": 14, "bold": False, "condensed": True},
+        {"text": f"{earth_pct:.2f}% der Erdumrundung", "rel_pos": (0.5, 0.84), "color": INK_RGBA, "fontsize": 14, "bold": False, "condensed": True},
     ])
     y += block_h
 
@@ -1190,9 +1223,9 @@ def draw_page1(display : Display,
     y += DIVIDER_GAP + DIVIDER_THICKNESS
 
     render_stat_block(display, pal_img, (right_x, y), (right_w, block_h), [
-        {"text": "HÖHENMETER", "rel_pos": (0.5, 0.18), "color": (0, 0, 0, 255), "fontsize": 16, "bold": False},
+        {"text": "HÖHENMETER", "rel_pos": (0.5, 0.18), "color": INK_RGBA, "fontsize": 16, "bold": False},
         {"text": f"{ytd_elevation_m:.0f} m", "rel_pos": (0.5, 0.54), "color": STRAVA_ORANGE, "fontsize": 26},
-        {"text": f"{everest_x:.1f}× Mount Everest", "rel_pos": (0.5, 0.84), "color": (0, 0, 0, 255), "fontsize": 14, "bold": False, "condensed": True},
+        {"text": f"{everest_x:.1f}× Mount Everest", "rel_pos": (0.5, 0.84), "color": INK_RGBA, "fontsize": 14, "bold": False, "condensed": True},
     ])
     y += block_h
 
@@ -1219,8 +1252,8 @@ def draw_page2(display : Display,
     right_x = MARGIN + left_w + GAP
     right_w = display.size[0] - MARGIN - right_x
 
-    left_label = GUIBox((left_w, LABEL_H), (MARGIN, content_y), WHITE)
-    left_label.add_text("LETZTE AKTIVITÄTEN", (0.5, 0.5), BLACK, fontsize = 20, bold = True, anchor = "mm")
+    left_label = GUIBox((left_w, LABEL_H), (MARGIN, content_y), PAPER)
+    left_label.add_text("LETZTE AKTIVITÄTEN", (0.5, 0.5), INK, fontsize = 20, bold = True, anchor = "mm")
     left_label.draw_box(display.draw)
 
     rows_y = content_y + LABEL_H + GAP // 2
@@ -1230,8 +1263,8 @@ def draw_page2(display : Display,
     draw_activity_table(display, pal_img, (MARGIN, rows_y), (left_w, rows_h), recent_activities)
 
     now = datetime.now()
-    month_label = GUIBox((right_w, LABEL_H), (right_x, content_y), WHITE)
-    month_label.add_text(f"{GERMAN_MONTHS[now.month - 1].upper()} {now.year}", (0.5, 0.5), BLACK, fontsize = 16, bold = True, condensed = True, anchor = "mm")
+    month_label = GUIBox((right_w, LABEL_H), (right_x, content_y), PAPER)
+    month_label.add_text(f"{GERMAN_MONTHS[now.month - 1].upper()} {now.year}", (0.5, 0.5), INK, fontsize = 16, bold = True, condensed = True, anchor = "mm")
     month_label.draw_box(display.draw)
 
     calendar_y = content_y + LABEL_H + GAP // 2
@@ -1239,14 +1272,14 @@ def draw_page2(display : Display,
     training_days = set(data.get("training_days_this_month") or [])
     draw_month_calendar(display, pal_img, (right_x, calendar_y), (right_w, calendar_h), now.year, now.month, training_days)
 
-def render_dashboard(data : dict, output_path : str | None = None, page : int = 1, total_pages : int = TOTAL_PAGES) -> Image.Image:
+def render_dashboard(data : dict, output_path : str | None = None, page : int = 1, total_pages : int = TOTAL_PAGES, dark_mode : bool = False) -> Image.Image:
 
     """
     Builds the dashboard image from the given data dict (see
     backend.api_reader.get_dashboard_data) and optionally saves it to disk.
     """
 
-    image = make_gui(data, page = page, total_pages = total_pages)
+    image = make_gui(data, page = page, total_pages = total_pages, dark_mode = dark_mode)
 
     if output_path is not None:
         # Atomic write: display_cycle.py may read this file concurrently

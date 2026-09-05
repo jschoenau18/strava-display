@@ -50,11 +50,12 @@ if __name__ == "__main__":
     # display.make_gui). display_cycle.py liest denselben Schalter und
     # zeigt dann dauerhaft nur Seite 1 an.
     total_pages = TOTAL_PAGES if os.getenv("STRAVA_SHOW_PAGE2", "1") == "1" else 1
+    dark_mode = os.getenv("STRAVA_DARK_MODE", "0") == "1"
     page_output_paths = [page_output_path(page) for page in range(1, total_pages + 1)]
 
     os.makedirs(OUTPUT_DIR, exist_ok = True)
     for page, output_path in enumerate(page_output_paths, start = 1):
-        render_dashboard(dashboard_data, output_path = output_path, page = page, total_pages = total_pages)
+        render_dashboard(dashboard_data, output_path = output_path, page = page, total_pages = total_pages, dark_mode = dark_mode)
 
     # Verwaiste Seiten von einem früheren Lauf mit mehr Seiten entfernen,
     # damit display_cycle.py nie ein veraltetes Bild anzeigt.

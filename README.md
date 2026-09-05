@@ -551,6 +551,18 @@ lässt den Seiten-Indikator unten weg und `display_cycle.py` zeigt dauerhaft
 Seite 1 statt hin- und herzuschalten. Beide Skripte lesen den Schalter
 unabhängig voneinander, müssen also beide dasselbe `.env` sehen.
 
+Per `.env` lässt sich auch ein Dark Mode aktivieren (schwarzer statt weißer
+Hintergrund, Text/Linien/Icons weiß statt schwarz; Strava-Orange und die
+übrigen Akzentfarben der Palette bleiben unverändert):
+
+```env
+STRAVA_DARK_MODE=1
+```
+
+Nur `main.py` liest diesen Schalter (er bestimmt, wie die PNGs gerendert
+werden) – `display_cycle.py` zeigt sie unverändert an, egal welches Theme
+beim Rendern aktiv war.
+
 Das Wetter im Header wird standardmäßig über den öffentlichen Internetzugang
 des Pi grob lokalisiert und für 24 Stunden gecacht. Für den stationären Pi ist
 eine feste, genauere Position in `.env` empfehlenswert:
