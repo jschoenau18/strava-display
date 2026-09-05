@@ -311,16 +311,20 @@ python3 --version
    Panel:
 
     ```sh
-    .venv/bin/python main.py
+    flock -w 60 ~/strava-api-display/.dashboard.lock .venv/bin/python main.py
     GPIOZERO_PIN_FACTORY=lgpio PYTHONPATH=~/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib flock -w 60 ~/strava-api-display/.dashboard.lock .venv/bin/python display_cycle.py
     ```
 
-    Das `flock` um `display_cycle.py` ist kein Zufall: Sobald der Timer unten
-    läuft, feuert er alle 2 Minuten `display_cycle.py` im Hintergrund. Ein
-    manueller Testlauf zur gleichen Zeit greift sonst auf dieselben
-    E-Paper-GPIO-Pins zu wie der laufende Timer-Job und crasht mit
-    `lgpio.error: 'GPIO busy'` – `flock` sorgt dafür, dass sich beide Läufe
-    die Pins nacheinander statt gleichzeitig teilen (siehe
+    Das `flock` um beide Aufrufe ist kein Zufall: Sobald die Timer unten
+    laufen, feuern sie alle 10 bzw. 2 Minuten `main.py`/`display_cycle.py` im
+    Hintergrund. Ein manueller Testlauf zur gleichen Zeit greift sonst ohne
+    Lock auf dieselben E-Paper-GPIO-Pins zu wie der laufende Timer-Job und
+    crasht mit `lgpio.error: 'GPIO busy'`, oder liest/schreibt die
+    Dashboard-PNGs mitten in einem Schreibvorgang des jeweils anderen Laufs
+    (`PIL.UnidentifiedImageError: cannot identify image file`, weil
+    `display_cycle.py` eine unvollständige Datei erwischt). `flock` sorgt
+    dafür, dass sich beide Läufe Pins und Dateien nacheinander statt
+    gleichzeitig teilen (siehe
     [Automatisches Update alle 10 Minuten + Seitenwechsel alle 2 Minuten](#automatisches-update-alle-10-minuten--seitenwechsel-alle-2-minuten)).
 
     Kein `.env` mit gültigen Tokens dabei? Dann läuft beim `main.py`-Aufruf

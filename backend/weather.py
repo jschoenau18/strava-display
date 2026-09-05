@@ -35,8 +35,11 @@ def _pi_location(route: list[tuple]) -> tuple[float, float] | None:
         return float(configured_latitude), float(configured_longitude)
 
     if CACHE_PATH.exists() and time.time() - CACHE_PATH.stat().st_mtime < 86400:
-        location = json.loads(CACHE_PATH.read_text())
-        return float(location["latitude"]), float(location["longitude"])
+        try:
+            location = json.loads(CACHE_PATH.read_text())
+            return float(location["latitude"]), float(location["longitude"])
+        except (json.JSONDecodeError, KeyError, TypeError, ValueError, OSError):
+            pass
 
     try:
         request = Request("https://ipapi.co/json/", headers={"User-Agent": "strava-api-display/1.0"})
@@ -45,7 +48,9 @@ def _pi_location(route: list[tuple]) -> tuple[float, float] | None:
         latitude = float(location["latitude"])
         longitude = float(location["longitude"])
         CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-        CACHE_PATH.write_text(json.dumps({"latitude": latitude, "longitude": longitude}))
+        tmp_path = CACHE_PATH.with_suffix(".json.tmp")
+        tmp_path.write_text(json.dumps({"latitude": latitude, "longitude": longitude}))
+        tmp_path.replace(CACHE_PATH)
         return latitude, longitude
     except (KeyError, TypeError, ValueError, OSError):
         return route[-1][:2] if route else None

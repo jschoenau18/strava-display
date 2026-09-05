@@ -4,6 +4,7 @@ from datetime import datetime
 from pathlib import Path
 import calendar
 import math
+import os
 
 BASE_DIR = Path(__file__).resolve().parent
 FONTS_DIR = BASE_DIR / "fonts"
@@ -1248,6 +1249,12 @@ def render_dashboard(data : dict, output_path : str | None = None, page : int = 
     image = make_gui(data, page = page, total_pages = total_pages)
 
     if output_path is not None:
-        image.convert("RGB").save(output_path)
+        # Atomic write: display_cycle.py may read this file concurrently
+        # (e.g. a manual test run racing the systemd timer without going
+        # through the shared flock), and a direct save() would let it
+        # observe a truncated/partial PNG mid-write.
+        tmp_path = f"{output_path}.tmp"
+        image.convert("RGB").save(tmp_path)
+        os.replace(tmp_path, output_path)
 
     return image
