@@ -1254,7 +1254,7 @@ def render_dashboard(data : dict, output_path : str | None = None, page : int = 
         # through the shared flock), and a direct save() would let it
         # observe a truncated/partial PNG mid-write.
         tmp_path = f"{output_path}.tmp"
-        image.convert("RGB").save(tmp_path)
+        image.convert("RGB").save(tmp_path, format = "PNG")
         os.replace(tmp_path, output_path)
 
     return image
