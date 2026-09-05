@@ -6,6 +6,36 @@ Versionierung nach [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [1.2.0] - 2026-09-05
+
+### Hinzugefügt
+
+- Dark Mode (`STRAVA_DARK_MODE=1` in `.env`): schwarzer statt weißer
+  Hintergrund, Text/Linien/Icons/Logo in Weiß statt Schwarz; Strava-Orange
+  und die übrigen Akzentfarben der Palette bleiben unverändert.
+- Persistentes Log (`strava-display.log`) für beide systemd-Services, mit
+  Zeitstempel-Header pro Lauf; `deploy/strava-display.logrotate` hält
+  jeweils höchstens den aktuellen plus den letzten Tag vor.
+- Failsafe in `display/eink.py`: prüft vor dem Panel-Zugriff, ob
+  `/dev/spidev*` existiert, und bricht mit einer klaren Fehlermeldung ab,
+  statt bei nicht aktiviertem SPI unbegrenzt auf den BUSY-Pin zu warten.
+
+### Geändert
+
+- Der manuelle Testlauf-Befehl für `main.py` in der README nutzt jetzt
+  denselben `flock` wie die systemd-Units, um Races mit einem parallel
+  laufenden Timer-Job zu vermeiden.
+
+### Behoben
+
+- Dashboard-PNGs und der Wetter-Standort-Cache werden jetzt atomar
+  geschrieben (Temp-Datei + `replace()`), damit ein gleichzeitiger
+  Lesevorgang (z. B. `display_cycle.py` während eines manuellen, nicht
+  geflockten `main.py`-Testlaufs) nie eine unvollständige Datei erwischt
+  (`PIL.UnidentifiedImageError` bzw. `json.JSONDecodeError`).
+- Ein defekter/leerer Wetter-Standort-Cache wird beim Lesen abgefangen
+  statt den gesamten Lauf abzubrechen.
+
 ## [1.1.0] - 2026-08-31
 
 ### Hinzugefügt
@@ -88,7 +118,8 @@ Versionierung nach [Semantic Versioning](https://semver.org/lang/de/).
   Dashboards (`GUIBox`, Dithering für die 6-Farb-Palette), Roboto-Fonts und
   Strava-Logo, `display/eink.py`-Treiber-Wrapper.
 
-[Unreleased]: https://github.com/jschoenau18/strava-display/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/jschoenau18/strava-display/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/jschoenau18/strava-display/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jschoenau18/strava-display/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/jschoenau18/strava-display/compare/v0.2.0...v1.0.0
 [0.2.0]: https://github.com/jschoenau18/strava-display/compare/v0.1.0...v0.2.0

@@ -722,7 +722,10 @@ Dict, das `display.render_dashboard()` erwartet:
 Lädt über Open-Meteo Temperatur, Wind und die Niederschlagswahrscheinlichkeit
 für die nächsten 30 Minuten. Die Standortreihenfolge ist: Koordinaten aus
 `WEATHER_LATITUDE`/`WEATHER_LONGITUDE`, 24-Stunden-IP-Cache, letzter GPS-Punkt
-der Route.
+der Route. Der IP-Cache (`output/weather-location.json`) wird atomar
+geschrieben (Temp-Datei + `Path.replace()`) und ein defekter/leerer Cache
+beim Lesen abgefangen statt den ganzen Lauf abzubrechen – beides gegen
+Races zwischen einem manuellen Testlauf und dem laufenden systemd-Timer.
 
 ### `backend/version.py`
 
@@ -740,11 +743,22 @@ für den Hintergrund zu den Release-Tags.
 Baut aus dem Dashboard-Dict ein `PIL.Image` (Modus `P`, feste
 SPECTRA6-Palette). Reiner Rendering-Code, kein Netzwerkzugriff.
 
+#### Theme (`INK`, `PAPER`, `INK_RGBA`, `PAPER_RGBA`, `DARK_MODE`, `_set_theme(dark_mode)`)
+
+Modulglobale Vordergrund-/Hintergrundfarbe (als Paletten-Index bzw. als
+RGBA-Äquivalent für die transparenten Overlays), die alle `draw_*`-Funktionen
+statt fest verdrahteter `BLACK`/`WHITE`-Werte verwenden. `make_gui()` ruft
+`_set_theme(dark_mode)` als Erstes auf und dreht damit Vorder-/Hintergrund
+um (siehe `STRAVA_DARK_MODE` in [Lokal testen](#lokal-testen-ohne-display)).
+Akzentfarben (Strava-Orange, Rot/Gelb/Blau/Grün) sind vom Theme unberührt.
+Modulglobal statt als Parameter durchgereicht, da ein Rendering-Lauf immer
+sequenziell in einem Thread passiert (nie zwei Seiten gleichzeitig).
+
 #### `class Display(size=(600, 400), colors=SPECTRA6_COLORS)`
 
 Container für das Ziel-`Image` (`.image`), den zugehörigen `ImageDraw`
-(`.draw`) und die Palette. Ein neues `Display()` startet immer mit weißem
-Hintergrund.
+(`.draw`) und die Palette. Ein neues `Display()` startet mit dem
+Hintergrund des aktuellen Themes (`PAPER`, siehe oben).
 
 #### `class GUIBox(size, anchor, backgroud_color, outline_color=None, outline_width=2)`
 
@@ -764,25 +778,36 @@ und macht vollständig transparente Pixel per Paletten-Index durchsichtig.
 Kernstück des "beliebige Farbe auf 6-Farb-Display"-Tricks, siehe
 [Design-Hinweise](#design-hinweise-farben-auf-der-6-farb-palette).
 
-#### `image_cleanup(image: Image) -> Image`
+#### `image_cleanup(image: Image, invert=False) -> Image`
 
-Normalisiert ein geladenes Icon/Logo: (fast) transparente Pixel werden voll
-transparent, alle anderen voll opak. Entfernt Kompressionsartefakte an
-Rändern vor dem Quantisieren.
+Normalisiert ein geladenes Icon/Logo zu Ink-auf-transparent. Die
+Icon-Dateien sind eine Mischung aus echten transparenten PNGs und reinen
+JPG/BMP-Exporten ohne Alphakanal (schwarzes Strichzeichnungs-Ink auf
+nahezu-weißem Hintergrund) – für Letztere wird die Transparenz aus der
+Helligkeit abgeleitet (nahe Weiß → transparent) statt aus einem
+nicht-existenten Alphakanal. `invert=True` (Dark Mode) dreht zusätzlich
+das verbleibende Ink von Schwarz auf Weiß, damit die Strichzeichnungen auf
+dunklem Grund nicht als weißer Kasten erscheinen; bereits vorhandene echte
+Transparenz (PNGs) bleibt davon unberührt.
 
 #### `get_palette_image() -> Image`
 
 Erstellt das 1×1-Referenzbild mit der SPECTRA6-Palette, das `quantize()`
 als Zielpalette braucht.
 
-#### `load_icon(pal_img: Image, filename: str) -> Image`
+#### `load_icon(pal_img: Image, filename: str, invert: bool | None = None) -> Image`
 
 Lädt eine Bilddatei aus `display/img/`, bereinigt sie (`image_cleanup`) und
-quantisiert sie auf die Palette (`to_spectra6`).
+quantisiert sie auf die Palette (`to_spectra6`). `invert` fällt standardmäßig
+auf das aktuelle `DARK_MODE` zurück (zur Aufruf-, nicht zur Definitionszeit
+aufgelöst, da sich `DARK_MODE` zwischen Renderings ändern kann).
 
 #### `load_logo(pal_img: Image, variant="white") -> Image`
 
-Kurzform von `load_icon()` für `strava-logo-full-{variant}.png`.
+Kurzform von `load_icon()` für `strava-logo-full-{variant}.png`, immer mit
+`invert=False` (ein mathematisch invertiertes Orange würde nur hässlich
+Cyan-stichig werden – `make_gui()` wählt stattdessen je nach Theme direkt
+die passend eingefärbte Logo-Datei, `"white"` im Dark Mode).
 
 #### `paste_with_transparency(base_image: Image, overlay: Image, position) -> None`
 
@@ -794,13 +819,14 @@ Fügt ein bereits quantisiertes Bild transparenzkorrekt in `base_image` ein
 Zeichnet einen hellgrauen, geditherten Trennbalken (Schwarz/Weiß-Schachbrett),
 zentriert auf `center_x`.
 
-#### `draw_vertical_divider(display, x, center_y, height, thickness=2, color=BLACK) -> None`
+#### `draw_vertical_divider(display, x, center_y, height, thickness=2, color=None) -> None`
 
 Zeichnet eine solide (nicht gedithert) vertikale Trennlinie der gegebenen
 Höhe, zentriert auf `center_y` – trennt im Header die
-Temperatur-/Wind-/Prognose-Bereiche.
+Temperatur-/Wind-/Prognose-Bereiche. `color=None` fällt auf das aktuelle
+`INK` zurück (siehe Theme oben).
 
-#### `draw_wind_arrow(display, anchor, degrees, size=18, color=BLACK) -> None`
+#### `draw_wind_arrow(display, anchor, degrees, size=18, color=None) -> None`
 
 Zeichnet einen kräftigen Pfeil (dicker Schaft + gefüllte Dreiecksspitze) in
 einer `size × size`-Box, der in die Richtung zeigt, in die der Wind weht
@@ -889,7 +915,7 @@ Formatiert ein Datum ohne Abhängigkeit von der `de_DE`-Systemlocale
 Tageszeitabhängige Begrüßung ("Guten Morgen" / "Guten Tag" / "Guten Abend" /
 "Gute Nacht" / "Hallo").
 
-#### `make_gui(data: dict, page: int = 1, total_pages: int = TOTAL_PAGES) -> Image`
+#### `make_gui(data: dict, page: int = 1, total_pages: int = TOTAL_PAGES, dark_mode: bool = False) -> Image`
 
 Baut das komplette Layout einer Dashboard-Seite aus dem `data`-Dict (Format
 siehe
@@ -906,15 +932,19 @@ ist (siehe `STRAVA_SHOW_PAGE2` in [Lokal testen](#lokal-testen-ohne-display)
 – bei nur einer Seite gibt es nichts anzuzeigen). Zeichnet außerdem
 `data["release_label"]` (siehe [`backend/version.py`](#backendversionpy))
 klein unten links in den Rand; zu lange Labels werden auf die verfügbare
-Breite gekürzt (`…`-Suffix).
+Breite gekürzt (`…`-Suffix). `dark_mode=True` schaltet per `_set_theme()`
+(siehe Theme oben) auf schwarzen Hintergrund/weißes Ink um, siehe
+`STRAVA_DARK_MODE` in [Lokal testen](#lokal-testen-ohne-display).
 
-#### `render_dashboard(data: dict, output_path: str | None = None, page: int = 1, total_pages: int = TOTAL_PAGES) -> Image`
+#### `render_dashboard(data: dict, output_path: str | None = None, page: int = 1, total_pages: int = TOTAL_PAGES, dark_mode: bool = False) -> Image`
 
 **Öffentlicher Haupteinstiegspunkt** des Moduls: ruft `make_gui(data,
-page=page, total_pages=total_pages)` auf und speichert das Ergebnis optional
-als PNG (`RGB`-konvertiert) unter `output_path`. `main.py` ruft das einmal
-pro Seite auf (`1` bis `total_pages`, siehe `main.py`s eigenes
-`total_pages`).
+page=page, total_pages=total_pages, dark_mode=dark_mode)` auf und speichert
+das Ergebnis optional als PNG (`RGB`-konvertiert, atomar über eine
+Temp-Datei + `os.replace()`, damit `display_cycle.py` bei gleichzeitigem
+Lesen nie eine unvollständige Datei erwischt) unter `output_path`. `main.py`
+ruft das einmal pro Seite auf (`1` bis `total_pages`, siehe `main.py`s
+eigenes `total_pages`).
 
 *(Interne Hilfsfunktionen `_select_font`, `_project_route_points`,
 `_haversine_km`, `_classify_climbs` sind nicht Teil der öffentlichen API.)*
@@ -931,7 +961,7 @@ Einziger Ort im Projekt mit direktem Hardwarezugriff (SPI).
 Initialisiert den Waveshare-Treiber, sendet das Bild ans Panel und schickt
 es danach in den Sleep-Modus. Erwartet exakt `600×400` px.
 
-- **Wirft:** `ValueError` bei falscher Bildgröße, `RuntimeError` falls `waveshare_epd` nicht installiert ist.
+- **Wirft:** `ValueError` bei falscher Bildgröße, `RuntimeError` falls `waveshare_epd` nicht installiert ist oder falls kein `/dev/spidev*` existiert (SPI nicht aktiviert oder Aktivierung ohne Neustart) – ohne diesen Check würde die Waveshare-Bibliothek stattdessen unbegrenzt auf den BUSY-Pin warten, siehe [Raspberry Pi einrichten](#raspberry-pi-einrichten).
 
 #### `update_display_from_file(image_path: str | Path, driver_name: str = "epd4in0e") -> None`
 
