@@ -12,6 +12,17 @@ def update_display(image: Image.Image, driver_name: str = "epd4in0e") -> None:
     if image.size != (600, 400):
         raise ValueError(f"Expected a 600x400 image, got {image.size[0]}x{image.size[1]}")
 
+    # Without an enabled SPI interface, the Waveshare driver can never talk
+    # to the panel controller: it polls the BUSY GPIO pin with no timeout,
+    # which hangs forever instead of raising an error. Fail fast here with
+    # an actionable message instead.
+    if not any(Path("/dev").glob("spidev*")):
+        raise RuntimeError(
+            "No /dev/spidev* device found - SPI is not enabled (or was enabled "
+            "without a reboot afterwards). Run 'sudo raspi-config nonint do_spi 0' "
+            "and reboot, then check 'ls /dev/spidev*'."
+        )
+
     try:
         driver = import_module(f"waveshare_epd.{driver_name}")
     except ModuleNotFoundError as error:
