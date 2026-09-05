@@ -374,6 +374,18 @@ ohne aktive Login-Session, mit Logs über `journalctl`):
     journalctl -u strava-dashboard.service -u strava-display-cycle.service -f   # Logs live verfolgen
     ```
 
+4. Beide Services schreiben zusätzlich (mit Zeitstempel pro Lauf) in
+   `~/strava-api-display/strava-display.log`, damit man nicht immer per
+   `journalctl` nach den beiden Unit-Namen filtern muss. `logrotate` hält
+   dabei jeweils höchstens den aktuellen plus den letzten Tag vor (siehe
+   [`deploy/strava-display.logrotate`](deploy/strava-display.logrotate)),
+   ältere Einträge werden automatisch verworfen:
+
+    ```sh
+    sudo cp deploy/strava-display.logrotate /etc/logrotate.d/strava-display
+    tail -f ~/strava-api-display/strava-display.log
+    ```
+
 Alternativ genügen auch zwei Cron-Einträge (`crontab -e`), falls kein
 systemd gewünscht ist:
 

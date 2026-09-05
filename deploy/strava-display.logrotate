@@ -1,0 +1,7 @@
+/home/jschoenau/strava-api-display/strava-display.log {
+    daily
+    rotate 1
+    missingok
+    notifempty
+    copytruncate
+}

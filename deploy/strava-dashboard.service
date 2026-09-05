@@ -7,4 +7,6 @@ Wants=network-online.target
 Type=oneshot
 User=jschoenau
 WorkingDirectory=/home/jschoenau/strava-api-display
-ExecStart=/usr/bin/flock -w 60 /home/jschoenau/strava-api-display/.dashboard.lock /home/jschoenau/strava-api-display/.venv/bin/python main.py
+StandardOutput=append:/home/jschoenau/strava-api-display/strava-display.log
+StandardError=append:/home/jschoenau/strava-api-display/strava-display.log
+ExecStart=/bin/sh -c 'echo "=== $(date -Is) main.py ==="; exec /usr/bin/flock -w 60 /home/jschoenau/strava-api-display/.dashboard.lock /home/jschoenau/strava-api-display/.venv/bin/python main.py'

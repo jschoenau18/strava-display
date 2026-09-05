@@ -8,4 +8,6 @@ User=jschoenau
 WorkingDirectory=/home/jschoenau/strava-api-display
 Environment=PYTHONPATH=/home/jschoenau/e-Paper/E-paper_Separate_Program/4inch_e-Paper_E/RaspberryPi_JetsonNano/python/lib
 Environment=GPIOZERO_PIN_FACTORY=lgpio
-ExecStart=/usr/bin/flock -w 60 /home/jschoenau/strava-api-display/.dashboard.lock /home/jschoenau/strava-api-display/.venv/bin/python display_cycle.py
+StandardOutput=append:/home/jschoenau/strava-api-display/strava-display.log
+StandardError=append:/home/jschoenau/strava-api-display/strava-display.log
+ExecStart=/bin/sh -c 'echo "=== $(date -Is) display_cycle.py ==="; exec /usr/bin/flock -w 60 /home/jschoenau/strava-api-display/.dashboard.lock /home/jschoenau/strava-api-display/.venv/bin/python display_cycle.py'

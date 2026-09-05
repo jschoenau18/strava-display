@@ -4,3 +4,4 @@ display/img/mockup.png
 output/
 .dashboard.lock
 .display_page_state
+*.log
