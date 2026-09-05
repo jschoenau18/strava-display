@@ -31,18 +31,23 @@ TRANSPARENT_INDEX = 6
 # Theme: INK is the foreground/text/line color, PAPER the background -
 # both as palette indices (for draw calls on the display's 'P'-mode image)
 # and as their RGBA equivalents (for the transparent overlays quantized via
-# to_spectra6). Every draw_* function below reads these as module globals
-# instead of taking a theme argument, since a render always happens
-# sequentially in one thread (main.py never renders two pages at once) -
-# make_gui() calls _set_theme() once at the start of each render to flip
-# them for STRAVA_DARK_MODE. Accent colors (STRAVA_ORANGE, RED, YELLOW,
-# BLUE, GREEN) are unaffected by the theme.
+# to_spectra6). DARK_MODE additionally tells load_icon() to invert the
+# black-ink-on-white-background JPG/BMP icon assets (see image_cleanup())
+# so they show as white ink on the dark page instead of a white box. Every
+# draw_* function below reads these as module globals instead of taking a
+# theme argument, since a render always happens sequentially in one thread
+# (main.py never renders two pages at once) - make_gui() calls _set_theme()
+# once at the start of each render to flip them for STRAVA_DARK_MODE.
+# Accent colors (STRAVA_ORANGE, RED, YELLOW, BLUE, GREEN) are unaffected.
 INK, PAPER = BLACK, WHITE
 INK_RGBA, PAPER_RGBA = (0, 0, 0, 255), (255, 255, 255, 255)
+DARK_MODE = False
 
 def _set_theme(dark_mode : bool) -> None:
 
-    global INK, PAPER, INK_RGBA, PAPER_RGBA
+    global INK, PAPER, INK_RGBA, PAPER_RGBA, DARK_MODE
+
+    DARK_MODE = dark_mode
 
     if dark_mode:
         INK, PAPER = WHITE, BLACK
@@ -178,11 +183,32 @@ def to_spectra6(img_rgba : Image.Image, pal_img : Image.Image, transparent_index
 
     return img_p
 
-def image_cleanup(image : Image.Image) -> Image.Image:
+def image_cleanup(image : Image.Image, invert : bool = False) -> Image.Image:
 
+    """
+    Normalizes an icon asset into ink-on-transparent. The icon files are a
+    mix of real transparent PNGs and plain JPG/BMP exports with a
+    near-white background and no alpha channel at all (so their existing
+    alpha is uniformly opaque) - for those, transparency has to be derived
+    from luminance instead, treating near-white pixels as background.
+    invert=True (dark mode) additionally flips the remaining ink pixels
+    from black to white so grayscale line-art icons stay legible on a
+    dark page instead of showing as a white box (their pre-existing alpha
+    channel, real transparency, is left untouched either way).
+    """
+
+    has_real_alpha = image.mode in ("RGBA", "LA", "PA") or "transparency" in image.info
     img = image.convert("RGBA")
     r, g, b, a = img.split()
-    a = a.point(lambda v: 0 if v < 20 else 255)
+
+    if has_real_alpha:
+        a = a.point(lambda v: 0 if v < 20 else 255)
+    else:
+        luminance = img.convert("L")
+        a = luminance.point(lambda v: 0 if v > 235 else 255)
+
+    if invert:
+        r, g, b = (channel.point(lambda v: 255 - v) for channel in (r, g, b))
 
     return Image.merge("RGBA", (r, g, b, a))
 
@@ -194,16 +220,27 @@ def get_palette_image() -> Image.Image:
 
     return pal_img
 
-def load_icon(pal_img : Image.Image, filename : str) -> Image.Image:
+def load_icon(pal_img : Image.Image, filename : str, invert : bool | None = None) -> Image.Image:
+
+    """
+    invert defaults to the current theme's DARK_MODE (resolved here, not as
+    a default parameter value, since DARK_MODE can change between renders -
+    see _set_theme()). Pass invert=False explicitly for assets that already
+    have the right color for both themes, e.g. the Strava logo (see
+    load_logo(), which picks a differently-colored file per theme instead).
+    """
+
+    if invert is None:
+        invert = DARK_MODE
 
     icon_path = IMG_DIR / filename
-    icon = image_cleanup(Image.open(icon_path))
+    icon = image_cleanup(Image.open(icon_path), invert = invert)
 
     return to_spectra6(icon, pal_img)
 
 def load_logo(pal_img : Image.Image, variant : str = "white") -> Image.Image:
 
-    return load_icon(pal_img, f"strava-logo-full-{variant}.png")
+    return load_icon(pal_img, f"strava-logo-full-{variant}.png", invert = False)
 
 def paste_with_transparency(base_image : Image.Image, overlay : Image.Image, position : tuple[int,int]) -> None:
 
@@ -909,7 +946,9 @@ def make_gui(data : dict, page : int = 1, total_pages : int = TOTAL_PAGES, dark_
 
     display = Display()
     pal_img = get_palette_image()
-    logo = load_logo(pal_img, variant = "orange")
+    # White wordmark on the dark header, orange wordmark on the light one -
+    # inverting the orange asset's colors would just turn it an ugly cyan.
+    logo = load_logo(pal_img, variant = "white" if dark_mode else "orange")
 
     MARGIN = 14
     GAP = 10
