@@ -537,6 +537,11 @@ zwischen den Aufrufen anschauen):
 .venv/bin/python display_cycle.py   # nächster Aufruf schaltet auf die andere Seite
 ```
 
+Ist das Panel physisch auf dem Kopf eingebaut, dreht `STRAVA_DISPLAY_ROTATE_180=1`
+das Bild um 180°, bevor es ans Panel geschickt wird – die gerenderten PNGs unter
+`output/` bleiben dabei unverändert in normaler Ausrichtung, betroffen ist nur
+das, was tatsächlich auf dem Display landet.
+
 Seite 2 lässt sich per `.env` komplett abschalten, falls nur die
 Aktivitäts-/Jahresstatistik-Seite gewünscht ist:
 
@@ -608,7 +613,8 @@ ausführbares Skript. Ruft keine Strava-API auf und braucht daher kein
 gültiges Token – nur die von `main.py` bereits gerenderten PNGs. Ablauf beim
 Start (`if __name__ == "__main__"`):
 
-1. `.env` laden (für `STRAVA_UPDATE_DISPLAY` und `STRAVA_SHOW_PAGE2`).
+1. `.env` laden (für `STRAVA_UPDATE_DISPLAY`, `STRAVA_SHOW_PAGE2` und
+   `STRAVA_DISPLAY_ROTATE_180`).
 2. `total_pages` genau wie in `main.py` bestimmen (`TOTAL_PAGES` oder `1`
    bei `STRAVA_SHOW_PAGE2=0`).
 3. `next_page(total_pages)`: liest die zuletzt gezeigte Seite aus
@@ -618,8 +624,9 @@ Start (`if __name__ == "__main__"`):
    gestartet.
 4. Falls `output/dashboard_page{N}.png` für die ermittelte Seite noch nicht
    existiert (main.py ist noch nie gelaufen): Meldung, kein Fehler.
-5. Falls `STRAVA_UPDATE_DISPLAY=1`: `update_display_from_file(page_path)`
-   aufrufen, sonst nur eine Info-Meldung ausgeben.
+5. Falls `STRAVA_UPDATE_DISPLAY=1`: `update_display_from_file(page_path,
+   rotate_180=...)` aufrufen (`rotate_180` aus `STRAVA_DISPLAY_ROTATE_180`),
+   sonst nur eine Info-Meldung ausgeben.
 
 ---
 

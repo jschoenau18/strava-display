@@ -52,7 +52,8 @@ if __name__ == "__main__":
         print(f"❌ {page_path} existiert noch nicht - main.py muss zuerst laufen.")
 
     elif os.getenv("STRAVA_UPDATE_DISPLAY", "0") == "1":
-        update_display_from_file(page_path)
+        rotate_180 = os.getenv("STRAVA_DISPLAY_ROTATE_180", "0") == "1"
+        update_display_from_file(page_path, rotate_180 = rotate_180)
         print(f"✅ E-Paper-Display auf Seite {page} aktualisiert ({page_path})!")
 
     else:
