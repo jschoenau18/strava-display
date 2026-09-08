@@ -6,6 +6,33 @@ Versionierung nach [Semantic Versioning](https://semver.org/lang/de/).
 
 ## [Unreleased]
 
+## [1.3.0] - 2026-09-08
+
+### Hinzugefügt
+
+- Schalter `STRAVA_DISPLAY_ROTATE_180` in `.env`: dreht das Bild um 180°,
+  bevor es ans Panel geschickt wird, für Panels die auf dem Kopf montiert
+  sind. Die gerenderten PNGs unter `output/` bleiben davon unberührt, nur
+  was tatsächlich aufs Display geschickt wird ist betroffen.
+- Update- und Seitenwechsel-Intervall jetzt über `.env` konfigurierbar
+  (`STRAVA_UPDATE_INTERVAL_MIN`, Default `10`, und
+  `STRAVA_DISPLAY_CYCLE_INTERVAL_MIN`, Default `2`). Da systemd-Timer ihr
+  `OnUnitActiveSec` nicht selbst aus einer `.env` lesen können, generiert
+  das neue `deploy/render-timers.sh` die `.timer`-Dateien aus Vorlagen
+  (`deploy/*.timer.template`); nach einer Änderung der Intervalle also
+  `render-timers.sh` laufen lassen und die `.timer`-Dateien neu nach
+  `/etc/systemd/system/` kopieren + `daemon-reload`.
+
+## [1.2.1] - 2026-09-05
+
+### Behoben
+
+- Die in 1.2.0 dokumentierte Behebung des `GIT_SSH_COMMAND`-Quotings in
+  `strava-update.service` griff dort noch nicht wirklich – der Wert stand
+  weiterhin ohne Anführungszeichen in der Unit-Datei. Jetzt korrekt
+  gequotet (`Environment="GIT_SSH_COMMAND=..."`), damit der nächtliche
+  Auto-Update-Timer den Deploy-Key zuverlässig verwendet.
+
 ## [1.2.0] - 2026-09-05
 
 ### Hinzugefügt
@@ -124,7 +151,9 @@ Versionierung nach [Semantic Versioning](https://semver.org/lang/de/).
   Dashboards (`GUIBox`, Dithering für die 6-Farb-Palette), Roboto-Fonts und
   Strava-Logo, `display/eink.py`-Treiber-Wrapper.
 
-[Unreleased]: https://github.com/jschoenau18/strava-display/compare/v1.2.0...HEAD
+[Unreleased]: https://github.com/jschoenau18/strava-display/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/jschoenau18/strava-display/compare/v1.2.1...v1.3.0
+[1.2.1]: https://github.com/jschoenau18/strava-display/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/jschoenau18/strava-display/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/jschoenau18/strava-display/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/jschoenau18/strava-display/compare/v0.2.0...v1.0.0
