@@ -1,0 +1,10 @@
+[Unit]
+Description=Switch the Strava E-Paper Dashboard page every @INTERVAL_MIN@ minutes
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=@INTERVAL_MIN@min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -64,6 +64,7 @@ if __name__ == "__main__":
         if os.path.exists(stale_path):
             os.remove(stale_path)
 
-    # display_cycle.py läuft alle 2 Minuten separat und wechselt zwischen
-    # den hier gerenderten Seiten hin und her (siehe dort).
+    # display_cycle.py läuft in einem eigenen, über STRAVA_DISPLAY_CYCLE_INTERVAL_MIN
+    # konfigurierbaren Intervall separat und wechselt zwischen den hier
+    # gerenderten Seiten hin und her (siehe dort).
     print(f"✅ Dashboard-Seiten gerendert: {', '.join(page_output_paths)}")

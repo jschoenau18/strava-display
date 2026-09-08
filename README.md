@@ -342,6 +342,21 @@ ohne aktive Login-Session, mit Logs über `journalctl`):
   das nur umschaltet, welche der beiden vorgerenderten Seiten das Panel
   gerade zeigt.
 
+Beide Intervalle lassen sich über `.env` steuern (`STRAVA_UPDATE_INTERVAL_MIN`,
+Default `10`, und `STRAVA_DISPLAY_CYCLE_INTERVAL_MIN`, Default `2`). Da
+systemd-Timer ihr `OnUnitActiveSec` nicht selbst aus einer `.env` lesen
+können, werden die beiden `.timer`-Dateien aus Vorlagen
+(`deploy/*.timer.template`) generiert:
+
+```sh
+deploy/render-timers.sh   # schreibt deploy/strava-dashboard.timer und
+                          # deploy/strava-display-cycle.timer aus .env neu
+```
+
+Nach einer Änderung der Intervalle in `.env` also `render-timers.sh`
+ausführen und die neu erzeugten `.timer`-Dateien wie in Schritt 2 unten
+nach `/etc/systemd/system/` kopieren + `daemon-reload`.
+
 1. `deploy/strava-dashboard.service` und `deploy/strava-display-cycle.service`
    gehen von `jschoenau`/`/home/jschoenau/strava-api-display` aus – bei
    abweichenden Pfaden entsprechend anpassen. Nur
@@ -387,7 +402,11 @@ ohne aktive Login-Session, mit Logs über `journalctl`):
     ```
 
 Alternativ genügen auch zwei Cron-Einträge (`crontab -e`), falls kein
-systemd gewünscht ist:
+systemd gewünscht ist. Die Minutenangaben (`*/10`, `*/2`) sind hier fest im
+Cron-Syntax verdrahtet - anders als bei den systemd-Timern oben (siehe
+`STRAVA_UPDATE_INTERVAL_MIN`/`STRAVA_DISPLAY_CYCLE_INTERVAL_MIN`) gibt es
+keine automatische Kopplung an `.env`; bei einer Änderung des Intervalls
+also auch die Zahlen hier manuell anpassen:
 
 ```cron
 */10 * * * * cd /home/jschoenau/strava-api-display && flock -w 60 .dashboard.lock .venv/bin/python main.py >> /home/jschoenau/strava-api-display/cron.log 2>&1

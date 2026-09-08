@@ -18,8 +18,8 @@ run_dashboard() {
     # shares the same lock so it can't race a concurrent read of the PNGs it
     # writes.
     #
-    # Runs display_cycle.py right after main.py (rather than waiting up to 2
-    # minutes for strava-display-cycle.timer) both to push the new release's
+    # Runs display_cycle.py right after main.py (rather than waiting for the
+    # next strava-display-cycle.timer run) both to push the new release's
     # render onto the panel immediately and, as part of verification, to
     # exercise the actual GPIO push path.
     GPIOZERO_PIN_FACTORY=lgpio PYTHONPATH="$EPAPER_PYTHONPATH" \
